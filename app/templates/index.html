@@ -28,7 +28,13 @@
           </span>
         </div>
         <p class="card-text text-muted small mb-2">{{ s['description'] or '（説明なし）' }}</p>
-        <p class="card-text text-muted small"><i class="bi bi-clock me-1"></i>{{ s['created_at'] }}</p>
+        <p class="card-text small mb-1">
+          <span class="badge bg-light text-dark border">
+            {{ THEMES[s['theme']].icon if s['theme'] in THEMES else '' }}
+            {{ THEMES[s['theme']].label if s['theme'] in THEMES else s['theme'] }}
+          </span>
+        </p>
+        <p class="card-text text-muted small"><i class="bi bi-clock me-1"></i>更新 {{ s['updated_at'] }}</p>
       </div>
       <div class="card-footer bg-transparent border-top-0 d-flex gap-2 pb-3">
         <a href="{{ url_for('stamps.detail', set_id=s['id']) }}" class="btn btn-sm btn-outline-primary">

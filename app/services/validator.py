@@ -38,47 +38,94 @@ class ValidationReport:
         return [i.message for i in self.issues if i.level == "warning"]
 
 
-def validate_stamp_set(output_dir: Path) -> ValidationReport:
+def validate_stamp_set(
+    output_dir: Path,
+    items: list[dict] | None = None,
+) -> ValidationReport:
     """
-    Validate generated stamp set.
+    Validate a generated stamp set.
 
-    Checks: PNG format, dimensions, file size, transparency,
-    stamp count (8), presence of main.png and tab.png.
+    Checks:
+      Image quality: PNG format, dimensions, file size, transparency, count
+      Meta images:   main.png and tab.png existence and size
+      Content:       duplicate captions, duplicate photos (when items provided)
     """
     from PIL import Image
 
     report = ValidationReport()
     stickers_dir = output_dir / "stickers"
 
-    # --- stamp count ---
+    # ── stamp count ──────────────────────────────────────────────────────────
     sticker_files = sorted(stickers_dir.glob("stamp_*.png")) if stickers_dir.exists() else []
     if len(sticker_files) < REQUIRED_COUNT:
-        report.issues.append(
-            ValidationIssue(
-                "error",
-                f"スタンプが {len(sticker_files)} 個です（{REQUIRED_COUNT} 個必要）",
-            )
-        )
+        report.issues.append(ValidationIssue(
+            "error",
+            f"スタンプが {len(sticker_files)} 個です（{REQUIRED_COUNT} 個必要）",
+        ))
 
-    # --- validate each sticker ---
+    # ── per-sticker checks ───────────────────────────────────────────────────
     for f in sticker_files:
         _check_png(f, STICKER_MAX_W, STICKER_MAX_H, MAX_FILE_BYTES, report, exact=False)
 
-    # --- main.png ---
+    # ── main.png ─────────────────────────────────────────────────────────────
     main_png = output_dir / "main.png"
     if not main_png.exists():
         report.issues.append(ValidationIssue("error", "main.png が存在しません"))
     else:
         _check_png(main_png, MAIN_W, MAIN_H, MAX_FILE_BYTES, report, exact=True)
 
-    # --- tab.png ---
+    # ── tab.png ──────────────────────────────────────────────────────────────
     tab_png = output_dir / "tab.png"
     if not tab_png.exists():
         report.issues.append(ValidationIssue("error", "tab.png が存在しません"))
     else:
         _check_png(tab_png, TAB_W, TAB_H, MAX_FILE_BYTES, report, exact=True)
 
+    # ── content checks (require items metadata) ──────────────────────────────
+    if items:
+        _check_content(items, report)
+
     return report
+
+
+def _check_content(items: list[dict], report: ValidationReport) -> None:
+    """Check for duplicate captions and duplicate photos."""
+    captions = [str(i.get("caption", "")).strip() for i in items]
+    photos = [str(i.get("photo_path", "")) for i in items]
+
+    # Duplicate captions
+    seen_caps: set[str] = set()
+    dupe_caps: set[str] = set()
+    for c in captions:
+        if c and c in seen_caps:
+            dupe_caps.add(c)
+        seen_caps.add(c)
+    if dupe_caps:
+        report.issues.append(ValidationIssue(
+            "warning",
+            f"重複セリフがあります: {', '.join(sorted(dupe_caps))}",
+        ))
+
+    # Duplicate photos
+    seen_photos: set[str] = set()
+    dupe_count = 0
+    for p in photos:
+        if p and p in seen_photos:
+            dupe_count += 1
+        seen_photos.add(p)
+    if dupe_count:
+        report.issues.append(ValidationIssue(
+            "warning",
+            f"同じ写真が {dupe_count + 1} 枚使われているスロットがあります",
+        ))
+
+    # Empty captions
+    empty = sum(1 for c in captions if not c)
+    if empty:
+        report.issues.append(ValidationIssue(
+            "warning",
+            f"セリフが空のスロットが {empty} 個あります",
+        ))
 
 
 def _check_png(
@@ -99,12 +146,10 @@ def _check_png(
 
     size_bytes = path.stat().st_size
     if size_bytes > max_bytes:
-        report.issues.append(
-            ValidationIssue(
-                "error",
-                f"{name}: ファイルサイズ {size_bytes:,} B（上限 {max_bytes:,} B）",
-            )
-        )
+        report.issues.append(ValidationIssue(
+            "error",
+            f"{name}: ファイルサイズ {size_bytes:,} B（上限 {max_bytes:,} B）",
+        ))
 
     try:
         img = Image.open(path)
@@ -112,24 +157,18 @@ def _check_png(
 
         if exact:
             if iw != max_w or ih != max_h:
-                report.issues.append(
-                    ValidationIssue(
-                        "error",
-                        f"{name}: サイズ {iw}×{ih} px（{max_w}×{max_h} px が必要）",
-                    )
-                )
+                report.issues.append(ValidationIssue(
+                    "error",
+                    f"{name}: サイズ {iw}×{ih} px（{max_w}×{max_h} px が必要）",
+                ))
         else:
             if iw > max_w or ih > max_h:
-                report.issues.append(
-                    ValidationIssue(
-                        "error",
-                        f"{name}: サイズ {iw}×{ih} px（最大 {max_w}×{max_h} px）",
-                    )
-                )
+                report.issues.append(ValidationIssue(
+                    "error",
+                    f"{name}: サイズ {iw}×{ih} px（最大 {max_w}×{max_h} px）",
+                ))
 
         if img.mode != "RGBA":
-            report.issues.append(
-                ValidationIssue("warning", f"{name}: 透過情報なし（RGBA 推奨）")
-            )
+            report.issues.append(ValidationIssue("warning", f"{name}: 透過情報なし（RGBA 推奨）"))
     except Exception as exc:
         report.issues.append(ValidationIssue("error", f"{name}: 画像を開けません（{exc}）"))

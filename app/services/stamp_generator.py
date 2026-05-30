@@ -3,7 +3,7 @@ Generate LINE stamp images from photos using the character-ification pipeline.
 
 Flow per item:
   photo → CharacterProcessor.process() → resize to spec → save PNG
-  intermediate (styled) image is also saved for step preview.
+  Themed main.png / tab.png are generated after all stickers are done.
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
-from .character_processor import CharacterProcessor, STYLES, EXPRESSIONS
-from .text_styles import TEXT_STYLES
+from .character_processor import CharacterProcessor
+from .text_styles import TEXT_STYLES, load_font, auto_font_size, _draw_outlined_text
 
 # LINE Creators Market spec
 STICKER_MAX_W = 370
@@ -26,7 +26,6 @@ TAB_W = 96
 TAB_H = 74
 MAX_FILE_BYTES = 1_000_000
 
-# Photo content area (before the stamp frame is added)
 _CONTENT_MAX_W = 260
 _CONTENT_MAX_H = 200
 
@@ -40,9 +39,9 @@ class StampItemSpec:
     position: int
     photo_path: str
     caption: str = ""
-    style: str = "line_stamp"
+    style: str = "simple_circle"   # template name
     text_style: str = "bubble"
-    expression: str = "none"
+    expression: str = "none"       # reserved
 
 
 @dataclass
@@ -50,7 +49,7 @@ class GenerationResult:
     position: int
     success: bool
     sticker_path: Optional[str] = None
-    preview_path: Optional[str] = None    # styled image (before frame+text)
+    preview_path: Optional[str] = None
     error: Optional[str] = None
     error_stage: Optional[str] = None
 
@@ -77,32 +76,35 @@ class GenerationSummary:
 def generate_stamp_set(
     items: list[StampItemSpec],
     output_dir: Path,
+    theme_name: str = "simple_icon",
+    set_name: str = "",
 ) -> GenerationSummary:
     """
     Generate a complete LINE stamp set (8 stickers + main + tab + ZIP).
 
-    Each item may have its own style / text_style / expression,
-    but typically the set uses one style throughout.
+    Args:
+        items:      8 StampItemSpec, each with its own template/caption.
+        output_dir: Output directory.
+        theme_name: Theme key from stamp_themes.THEMES (used for main/tab).
+        set_name:   Displayed on main.png.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    stickers_dir = output_dir / "stickers"
-    stickers_dir.mkdir(exist_ok=True)
-    previews_dir = output_dir / "previews"
-    previews_dir.mkdir(exist_ok=True)
+    (output_dir / "stickers").mkdir(exist_ok=True)
+    (output_dir / "previews").mkdir(exist_ok=True)
 
     results: list[GenerationResult] = []
-    main_saved = False
-
     for item in items:
-        result = _process_one(item, stickers_dir, previews_dir)
-        if result.success and not main_saved:
-            _save_main_tab(Path(result.sticker_path), output_dir)
-            main_saved = True
-        results.append(result)
+        results.append(_process_one(item, output_dir / "stickers", output_dir / "previews"))
+
+    # Themed main / tab
+    successful_stickers = [
+        Path(r.sticker_path) for r in results if r.success and r.sticker_path
+    ]
+    _generate_themed_main_tab(successful_stickers, theme_name, set_name, output_dir)
 
     zip_path: Optional[Path] = None
-    if any(r.success for r in results):
-        zip_path = _build_zip(output_dir, stickers_dir, results)
+    if successful_stickers:
+        zip_path = _build_zip(output_dir, output_dir / "stickers", results)
 
     return GenerationSummary(
         set_output_dir=str(output_dir),
@@ -147,7 +149,6 @@ def _process_one(
             sticker_path=str(sticker_path),
             preview_path=str(preview_path),
         )
-
     except Exception as exc:
         return GenerationResult(
             position=item.position,
@@ -167,18 +168,74 @@ def _load_image(path: Path) -> Image.Image:
     return Image.open(path)
 
 
-def _save_main_tab(sticker_src: Path, output_dir: Path) -> None:
-    """Create main.png (240×240) and tab.png (96×74) from the first sticker."""
+# ---------------------------------------------------------------------------
+# Themed main.png / tab.png
+# ---------------------------------------------------------------------------
+
+def _generate_themed_main_tab(
+    sticker_paths: list[Path],
+    theme_name: str,
+    set_name: str,
+    output_dir: Path,
+) -> None:
+    """
+    main.png (240×240): theme-colored background + up to 3 sticker thumbnails + set name.
+    tab.png  (96×74):   first sticker as a clean circular icon, no text.
+    """
+    if not sticker_paths:
+        return
+
     try:
-        img = Image.open(sticker_src).convert("RGBA")
-        for fname, w, h in [("main.png", MAIN_W, MAIN_H), ("tab.png", TAB_W, TAB_H)]:
-            fitted = img.copy()
-            fitted.thumbnail((w, h), Image.Resampling.LANCZOS)
-            canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            canvas.paste(fitted,
-                         ((w - fitted.width) // 2, (h - fitted.height) // 2),
-                         fitted)
-            canvas.save(output_dir / fname, "PNG")
+        from .stamp_themes import THEMES
+        cfg = THEMES.get(theme_name)
+        bg_color = cfg.main_bg if cfg else (60, 60, 90, 255)
+    except Exception:
+        bg_color = (60, 60, 90, 255)
+
+    # ── main.png ────────────────────────────────────────────────────────────
+    main = Image.new("RGBA", (MAIN_W, MAIN_H), bg_color)
+    shown = sticker_paths[:3]
+
+    if len(shown) == 1:
+        _paste_thumb(main, shown[0], 150, (MAIN_W // 2, 100))
+    elif len(shown) == 2:
+        for i, p in enumerate(shown):
+            _paste_thumb(main, p, 100, (60 + i * 120, 100))
+    else:
+        _paste_thumb(main, shown[0], 100, (60, 80))
+        _paste_thumb(main, shown[1], 100, (180, 80))
+        _paste_thumb(main, shown[2], 90,  (120, 170))
+
+    # Set name text at bottom
+    if set_name:
+        font_size = auto_font_size(set_name, 220, base_size=22, min_size=10)
+        font = load_font(font_size)
+        draw = ImageDraw.Draw(main)
+        bbox = draw.textbbox((0, 0), set_name, font=font)
+        tw = bbox[2] - bbox[0]
+        tx = (MAIN_W - tw) // 2
+        ty = MAIN_H - (bbox[3] - bbox[1]) - 8
+        _draw_outlined_text(draw, (tx, ty), set_name, font,
+                            fill=(255, 255, 255, 255),
+                            stroke_fill=(0, 0, 0, 180),
+                            stroke_width=2)
+
+    main.save(output_dir / "main.png", "PNG")
+
+    # ── tab.png ─────────────────────────────────────────────────────────────
+    tab = Image.new("RGBA", (TAB_W, TAB_H), (0, 0, 0, 0))
+    _paste_thumb(tab, sticker_paths[0], min(TAB_W, TAB_H) - 4, (TAB_W // 2, TAB_H // 2))
+    tab.save(output_dir / "tab.png", "PNG")
+
+
+def _paste_thumb(canvas: Image.Image, src: Path, size: int, center: tuple[int, int]) -> None:
+    """Load *src*, thumbnail to *size*, paste centered at *center* on *canvas*."""
+    try:
+        img = Image.open(src).convert("RGBA")
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
+        x = center[0] - img.width // 2
+        y = center[1] - img.height // 2
+        canvas.paste(img, (x, y), img)
     except Exception:
         pass
 

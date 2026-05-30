@@ -12,8 +12,10 @@ CREATE TABLE IF NOT EXISTS stamp_sets (
     name        TEXT    NOT NULL,
     description TEXT    NOT NULL DEFAULT '',
     created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     status      TEXT    NOT NULL DEFAULT 'draft',
-    style       TEXT    NOT NULL DEFAULT 'line_stamp',
+    theme       TEXT    NOT NULL DEFAULT 'simple_icon',
+    style       TEXT    NOT NULL DEFAULT 'simple_circle',
     text_style  TEXT    NOT NULL DEFAULT 'bubble',
     expression  TEXT    NOT NULL DEFAULT 'none',
     output_dir  TEXT,
@@ -26,6 +28,7 @@ CREATE TABLE IF NOT EXISTS stamp_items (
     position      INTEGER NOT NULL CHECK(position BETWEEN 1 AND 8),
     photo_path    TEXT    NOT NULL,
     caption       TEXT    NOT NULL DEFAULT '',
+    item_template TEXT,
     sticker_path  TEXT,
     preview_path  TEXT,
     error_message TEXT,
@@ -33,12 +36,22 @@ CREATE TABLE IF NOT EXISTS stamp_items (
 );
 """
 
-# Columns added after initial schema – applied via migration
+# NOTE: SQLite forbids ALTER TABLE ADD COLUMN with a non-constant default
+# (e.g. datetime('now')). updated_at is therefore added as a plain nullable
+# column here and back-filled below; new rows get their default from SCHEMA.
 _MIGRATIONS = [
-    "ALTER TABLE stamp_sets ADD COLUMN style      TEXT NOT NULL DEFAULT 'line_stamp'",
+    "ALTER TABLE stamp_sets ADD COLUMN style      TEXT NOT NULL DEFAULT 'simple_circle'",
     "ALTER TABLE stamp_sets ADD COLUMN text_style TEXT NOT NULL DEFAULT 'bubble'",
     "ALTER TABLE stamp_sets ADD COLUMN expression TEXT NOT NULL DEFAULT 'none'",
-    "ALTER TABLE stamp_items ADD COLUMN preview_path TEXT",
+    "ALTER TABLE stamp_sets ADD COLUMN theme      TEXT NOT NULL DEFAULT 'simple_icon'",
+    "ALTER TABLE stamp_sets ADD COLUMN updated_at TEXT",
+    "ALTER TABLE stamp_items ADD COLUMN preview_path  TEXT",
+    "ALTER TABLE stamp_items ADD COLUMN item_template TEXT",
+]
+
+# Run after _MIGRATIONS to back-fill nullable columns
+_BACKFILLS = [
+    "UPDATE stamp_sets SET updated_at = created_at WHERE updated_at IS NULL",
 ]
 
 
@@ -65,6 +78,11 @@ def init_db(app: Flask) -> None:
         db.executescript(SCHEMA)
         # Apply migrations (idempotent – ignore "duplicate column" errors)
         for sql in _MIGRATIONS:
+            try:
+                db.execute(sql)
+            except sqlite3.OperationalError:
+                pass
+        for sql in _BACKFILLS:
             try:
                 db.execute(sql)
             except sqlite3.OperationalError:
