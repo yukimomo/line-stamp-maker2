@@ -15,6 +15,7 @@ from .services.photo_loader import load_adopted_photos
 from .services.stamp_generator import StampItemSpec, generate_stamp_set
 from .services.validator import validate_stamp_set
 from .services.character_processor import STYLES, EXPRESSIONS
+from .services.stamp_templates import TEMPLATES, auto_select_template
 from .services.text_styles import TEXT_STYLES
 
 bp = Blueprint("stamps", __name__)
@@ -45,7 +46,7 @@ def index():
     rows = db.execute(
         "SELECT id, name, description, created_at, status, zip_path, style FROM stamp_sets ORDER BY created_at DESC"
     ).fetchall()
-    return render_template("index.html", stamp_sets=rows, STYLES=STYLES)
+    return render_template("index.html", stamp_sets=rows, TEMPLATES=TEMPLATES)
 
 
 @bp.route("/stamps/new")
@@ -55,8 +56,7 @@ def new_set():
         photos=_get_photos(),
         caption_templates=CAPTION_TEMPLATES,
         all_templates=ALL_TEMPLATES,
-        STYLES=STYLES,
-        EXPRESSIONS=EXPRESSIONS,
+        TEMPLATES=TEMPLATES,
         TEXT_STYLES=TEXT_STYLES,
     )
 
@@ -65,9 +65,9 @@ def new_set():
 def create_set():
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
-    style = request.form.get("style", "line_stamp")
+    style = request.form.get("style", "simple_circle")
     text_style = request.form.get("text_style", "bubble")
-    expression = request.form.get("expression", "none")
+    expression = "none"
 
     items: list[dict] = []
     for i in range(1, 9):
@@ -81,19 +81,17 @@ def create_set():
         error = "セット名を入力してください"
     elif len(items) < 8:
         error = f"写真を8枚選択してください（現在 {len(items)} 枚）"
-    if style not in STYLES:
-        style = "line_stamp"
+    if style not in TEMPLATES:
+        style = "simple_circle"
     if text_style not in TEXT_STYLES:
         text_style = "bubble"
-    if expression not in EXPRESSIONS:
-        expression = "none"
 
     if error:
         return (
             render_template("new.html", photos=_get_photos(),
                             caption_templates=CAPTION_TEMPLATES,
                             all_templates=ALL_TEMPLATES,
-                            STYLES=STYLES, EXPRESSIONS=EXPRESSIONS,
+                            TEMPLATES=TEMPLATES,
                             TEXT_STYLES=TEXT_STYLES, error=error),
             400,
         )
@@ -138,8 +136,7 @@ def detail(set_id: int):
         stamp_set=stamp_set,
         items=items,
         validation=validation,
-        STYLES=STYLES,
-        EXPRESSIONS=EXPRESSIONS,
+        TEMPLATES=TEMPLATES,
         TEXT_STYLES=TEXT_STYLES,
     )
 
@@ -155,9 +152,9 @@ def generate(set_id: int):
         "SELECT * FROM stamp_items WHERE set_id = ? ORDER BY position", (set_id,)
     ).fetchall()
 
-    style = stamp_set["style"] or "line_stamp"
+    style = stamp_set["style"] or "simple_circle"
     text_style = stamp_set["text_style"] or "bubble"
-    expression = stamp_set["expression"] or "none"
+    expression = "none"
 
     output_dir = Path(current_app.config["OUTPUT_DIR"]) / f"set_{set_id:04d}"
     specs = [
