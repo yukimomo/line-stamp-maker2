@@ -8,14 +8,21 @@
   </a>
 </div>
 
-<!-- Header -->
+<!-- ヘッダー -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body">
-    <div class="d-flex flex-wrap align-items-center gap-3">
+    <div class="d-flex flex-wrap align-items-start gap-3">
       <div class="flex-grow-1">
         <h2 class="fw-bold mb-1">{{ stamp_set['name'] }}</h2>
-        <p class="text-muted mb-0">{{ stamp_set['description'] or '（説明なし）' }}</p>
-        <small class="text-muted"><i class="bi bi-clock me-1"></i>{{ stamp_set['created_at'] }}</small>
+        <p class="text-muted mb-1">{{ stamp_set['description'] or '（説明なし）' }}</p>
+        <div class="d-flex flex-wrap gap-2 small text-muted">
+          <span><i class="bi bi-clock me-1"></i>{{ stamp_set['created_at'] }}</span>
+          <span><i class="bi bi-palette me-1"></i>{{ STYLES.get(stamp_set['style'], stamp_set['style']) }}</span>
+          <span><i class="bi bi-chat-quote me-1"></i>{{ stamp_set['text_style'] }}</span>
+          {% if stamp_set['expression'] != 'none' %}
+          <span><i class="bi bi-emoji-smile me-1"></i>{{ EXPRESSIONS.get(stamp_set['expression'], '') }}</span>
+          {% endif %}
+        </div>
       </div>
       <span class="badge fs-6
         {% if stamp_set['status'] == 'generated' %}bg-success
@@ -30,7 +37,7 @@
   </div>
 </div>
 
-<!-- Validation report -->
+<!-- 規格チェック -->
 {% if validation %}
   {% if validation.is_valid %}
   <div class="alert alert-success">
@@ -38,37 +45,74 @@
   </div>
   {% else %}
   <div class="alert alert-danger">
-    <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>仕様チェックでエラーがあります</strong>
-    <ul class="mb-0 mt-2">
-      {% for e in validation.errors %}<li>{{ e }}</li>{% endfor %}
-    </ul>
+    <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>仕様チェックエラー</strong>
+    <ul class="mb-0 mt-2">{% for e in validation.errors %}<li>{{ e }}</li>{% endfor %}</ul>
   </div>
   {% endif %}
   {% if validation.warnings %}
-  <div class="alert alert-warning">
-    <i class="bi bi-exclamation-circle me-2"></i>警告:
-    {% for w in validation.warnings %}<br>・{{ w }}{% endfor %}
+  <div class="alert alert-warning small">
+    {% for w in validation.warnings %}・{{ w }}<br>{% endfor %}
   </div>
   {% endif %}
 {% endif %}
 
-<!-- Stamp preview grid -->
+<!-- スタンプ一覧 (比較プレビュー付き) -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body">
-    <h5 class="card-title mb-3"><i class="bi bi-grid me-2"></i>スタンプ一覧（8枚）</h5>
-    <div class="row row-cols-2 row-cols-sm-4 g-3">
+    <h5 class="card-title mb-3">
+      <i class="bi bi-grid me-2"></i>スタンプ一覧（8枚）
+      {% if stamp_set['status'] == 'generated' %}
+      <small class="text-muted fw-normal ms-2" style="font-size:.8rem">
+        写真 / スタイル適用後 / 完成スタンプ の比較
+      </small>
+      {% endif %}
+    </h5>
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3">
       {% for item in items %}
       <div class="col">
-        <div class="card h-100 border {% if item['error_message'] %}border-danger{% elif item['sticker_path'] %}border-success{% else %}border-secondary{% endif %} text-center">
-          <div class="card-body p-2">
-            <div class="text-muted small fw-semibold mb-1">{{ item['position'] }}</div>
+        <div class="card h-100 border
+          {% if item['error_message'] %}border-danger
+          {% elif item['sticker_path'] %}border-success
+          {% else %}border-secondary{% endif %}">
+          <div class="card-body p-2 text-center">
+            <div class="text-muted small fw-bold mb-1">{{ item['position'] }}</div>
 
             {% if item['sticker_path'] %}
+              <!-- 生成済み: 3段比較 -->
+              <div class="d-flex justify-content-center gap-1 mb-1">
+                <!-- 元写真 -->
+                <div class="text-center" style="width:30%">
+                  <img src="{{ item['photo_path'] | photourl }}"
+                       style="width:100%;height:60px;object-fit:cover;border-radius:4px"
+                       alt="元" title="元写真">
+                  <div style="font-size:.6rem;color:#999">元</div>
+                </div>
+                <!-- スタイル適用後 -->
+                {% if item['preview_path'] %}
+                <div class="text-center" style="width:30%">
+                  <img src="{{ item['preview_path'] | photourl }}"
+                       style="width:100%;height:60px;object-fit:cover;border-radius:4px"
+                       alt="加工" title="スタイル適用後">
+                  <div style="font-size:.6rem;color:#999">加工</div>
+                </div>
+                {% endif %}
+                <!-- 完成スタンプ -->
+                <div class="text-center" style="width:{% if item['preview_path'] %}30{% else %}60{% endif %}%">
+                  <img src="{{ item['sticker_path'] | photourl }}"
+                       style="width:100%;height:60px;object-fit:contain;border-radius:4px;background:#f8f9fa"
+                       alt="完成" title="完成スタンプ">
+                  <div style="font-size:.6rem;color:#28a745;font-weight:600">完成</div>
+                </div>
+              </div>
+              <!-- 完成スタンプ大表示 -->
               <img src="{{ item['sticker_path'] | photourl }}"
                    class="stamp-thumb mb-1"
-                   alt="スタンプ {{ item['position'] }}">
+                   alt="スタンプ {{ item['position'] }}"
+                   style="max-height:130px">
             {% else %}
-              <div class="stamp-thumb mb-1 d-flex align-items-center justify-content-center bg-light text-muted" style="height:120px">
+              <!-- 未生成: 元写真のみ表示 -->
+              <div class="stamp-thumb mb-1 d-flex align-items-center justify-content-center
+                           bg-light rounded" style="height:130px; overflow:hidden">
                 {% if item['error_message'] %}
                   <i class="bi bi-x-circle fs-2 text-danger"></i>
                 {% else %}
@@ -81,10 +125,10 @@
             <div class="small fw-semibold text-truncate" title="{{ item['caption'] }}">
               {{ item['caption'] or '（セリフなし）' }}
             </div>
-
             {% if item['error_message'] %}
-            <div class="text-danger mt-1" style="font-size:.75rem" title="{{ item['error_message'] }}">
-              <i class="bi bi-exclamation-circle me-1"></i>{{ item['error_message'][:60] }}{% if item['error_message']|length > 60 %}…{% endif %}
+            <div class="text-danger mt-1" style="font-size:.72rem" title="{{ item['error_message'] }}">
+              <i class="bi bi-exclamation-circle me-1"></i>
+              {{ item['error_message'][:70] }}{% if item['error_message']|length > 70 %}…{% endif %}
             </div>
             {% endif %}
           </div>
@@ -95,13 +139,12 @@
   </div>
 </div>
 
-<!-- Actions -->
+<!-- 操作 -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body">
     <h5 class="card-title mb-3"><i class="bi bi-gear me-2"></i>操作</h5>
     <div class="d-flex flex-wrap gap-3 align-items-center">
 
-      <!-- Generate -->
       <form method="post" action="{{ url_for('stamps.generate', set_id=stamp_set['id']) }}"
             id="generate-form">
         <button type="submit" id="generate-btn" class="btn btn-success btn-lg">
@@ -110,15 +153,12 @@
         </button>
       </form>
 
-      <!-- Download ZIP -->
       {% if stamp_set['zip_path'] %}
-      <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}"
-         class="btn btn-primary btn-lg">
+      <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-primary btn-lg">
         <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード
       </a>
       {% endif %}
 
-      <!-- Reset stuck status -->
       {% if stamp_set['status'] in ('generating', 'error') %}
       <form method="post" action="{{ url_for('stamps.reset_set', set_id=stamp_set['id']) }}">
         <button class="btn btn-outline-warning">
@@ -127,29 +167,26 @@
       </form>
       {% endif %}
 
-      <!-- Delete -->
-      <form method="post" action="{{ url_for('stamps.delete_set', set_id=stamp_set['id']) }}" class="ms-auto"
-            onsubmit="return confirm('このセットを削除しますか？')">
-        <button class="btn btn-outline-danger">
-          <i class="bi bi-trash me-1"></i>削除
-        </button>
+      <form method="post" action="{{ url_for('stamps.delete_set', set_id=stamp_set['id']) }}"
+            class="ms-auto" onsubmit="return confirm('このセットを削除しますか？')">
+        <button class="btn btn-outline-danger"><i class="bi bi-trash me-1"></i>削除</button>
       </form>
     </div>
 
     {% if stamp_set['status'] == 'generating' %}
     <div class="alert alert-warning mt-3 mb-0">
       <i class="bi bi-hourglass-split me-1"></i>
-      前回の生成が中断した可能性があります。「ステータスをリセット」を押してから再生成してください。
+      前回の生成が中断した可能性があります。「ステータスをリセット」→「再生成」を試してください。
     </div>
     {% elif stamp_set['status'] in ('draft', 'partial') %}
     <div class="alert alert-info mt-3 mb-0">
       <i class="bi bi-info-circle me-1"></i>
-      生成には人物検出・セグメンテーション・文字入れ処理を行います。写真8枚で数分かかる場合があります。
+      「スタンプを生成」を押すとキャラクター化処理が始まります。写真8枚で約10〜30秒かかります。
     </div>
     {% elif stamp_set['status'] == 'error' %}
     <div class="alert alert-danger mt-3 mb-0">
       <i class="bi bi-exclamation-triangle me-1"></i>
-      生成に失敗しました。各スロットのエラー内容を確認し、「ステータスをリセット」→「再生成」を試してください。
+      生成に失敗しました。各スロットのエラーを確認し、リセット→再生成を試してください。
     </div>
     {% endif %}
   </div>
@@ -158,11 +195,11 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  document.getElementById('generate-form').addEventListener('submit', function () {
-    const btn = document.getElementById('generate-btn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成中…';
-    document.getElementById('loading-overlay').style.display = 'flex';
-  });
+document.getElementById('generate-form').addEventListener('submit', function () {
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成中…';
+  document.getElementById('loading-overlay').style.display = 'flex';
+});
 </script>
 {% endblock %}

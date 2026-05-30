@@ -1,4 +1,4 @@
-"""Tests for stamp_generator service (fallback path, no line-stamp-maker)."""
+"""Tests for stamp_generator service."""
 
 from __future__ import annotations
 import zipfile
@@ -7,67 +7,49 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-import app.services.stamp_generator as sg
 from app.services.stamp_generator import (
     GenerationResult,
     GenerationSummary,
     StampItemSpec,
-    _add_caption_pil,
     _build_zip,
-    _save_fitted,
+    _save_main_tab,
     generate_stamp_set,
+    MAIN_H,
+    MAIN_W,
+    STICKER_MAX_H,
+    STICKER_MAX_W,
+    TAB_H,
+    TAB_W,
 )
 
 
-# Force fallback (pure-Pillow) path for all tests in this module
-@pytest.fixture(autouse=True)
-def force_fallback(monkeypatch):
-    monkeypatch.setattr(sg, "_HAS_LSM", False)
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def sample_png(tmp_path: Path):
+    def _make(name="test.png", size=(200, 200)) -> Path:
+        img = Image.new("RGB", size, (80, 160, 200))
+        p = tmp_path / name
+        img.save(p, "PNG")
+        return p
+    return _make
+
+
+def _make_8_specs(photo: Path) -> list[StampItemSpec]:
+    return [
+        StampItemSpec(position=i, photo_path=str(photo), caption=f"テスト{i}")
+        for i in range(1, 9)
+    ]
 
 
 # ---------------------------------------------------------------------------
-# Unit: helper functions
+# Unit: _build_zip
 # ---------------------------------------------------------------------------
-
-class TestAddCaptionPil:
-    def test_returns_image(self):
-        img = Image.new("RGBA", (200, 200), (255, 0, 0, 255))
-        result = _add_caption_pil(img, "テスト")
-        assert isinstance(result, Image.Image)
-        assert result.mode == "RGBA"
-
-    def test_same_size(self):
-        img = Image.new("RGBA", (300, 250), (0, 255, 0, 255))
-        result = _add_caption_pil(img, "OK")
-        assert result.size == (300, 250)
-
-    def test_empty_caption_not_called(self):
-        # Caller responsibility: only call when caption is truthy.
-        # Passing empty string should still return valid image.
-        img = Image.new("RGBA", (100, 100), (0, 0, 255, 255))
-        result = _add_caption_pil(img, "")
-        assert isinstance(result, Image.Image)
-
-
-class TestSaveFitted:
-    def test_creates_file(self, tmp_path, make_png):
-        src = make_png("src.png", (400, 300))
-        img = Image.open(src).convert("RGBA")
-        out = tmp_path / "main.png"
-        _save_fitted(img, out, 240, 240)
-        assert out.exists()
-
-    def test_exact_canvas_size(self, tmp_path, make_png):
-        src = make_png("src.png", (400, 300))
-        img = Image.open(src).convert("RGBA")
-        out = tmp_path / "tab.png"
-        _save_fitted(img, out, 96, 74)
-        saved = Image.open(out)
-        assert saved.size == (96, 74)
-
 
 class TestBuildZip:
-    def _make_sticker(self, stickers_dir: Path, pos: int) -> GenerationResult:
+    def _sticker(self, stickers_dir: Path, pos: int) -> GenerationResult:
         p = stickers_dir / f"stamp_{pos:02d}.png"
         Image.new("RGBA", (100, 100), (255, 0, 0, 255)).save(p, "PNG")
         return GenerationResult(position=pos, success=True, sticker_path=str(p))
@@ -75,97 +57,132 @@ class TestBuildZip:
     def test_zip_created(self, tmp_path):
         stickers_dir = tmp_path / "stickers"
         stickers_dir.mkdir()
-        results = [self._make_sticker(stickers_dir, i) for i in range(1, 9)]
-        # add main/tab
+        results = [self._sticker(stickers_dir, i) for i in range(1, 9)]
         Image.new("RGBA", (240, 240)).save(tmp_path / "main.png", "PNG")
         Image.new("RGBA", (96, 74)).save(tmp_path / "tab.png", "PNG")
+        assert _build_zip(tmp_path, stickers_dir, results).exists()
 
-        zip_path = _build_zip(tmp_path, stickers_dir, results)
-        assert zip_path.exists()
-
-    def test_zip_contains_stickers_and_meta(self, tmp_path):
+    def test_contains_all_files(self, tmp_path):
         stickers_dir = tmp_path / "stickers"
         stickers_dir.mkdir()
-        results = [self._make_sticker(stickers_dir, i) for i in range(1, 9)]
+        results = [self._sticker(stickers_dir, i) for i in range(1, 9)]
         Image.new("RGBA", (240, 240)).save(tmp_path / "main.png", "PNG")
         Image.new("RGBA", (96, 74)).save(tmp_path / "tab.png", "PNG")
-
-        zip_path = _build_zip(tmp_path, stickers_dir, results)
-        with zipfile.ZipFile(zip_path) as zf:
+        zp = _build_zip(tmp_path, stickers_dir, results)
+        with zipfile.ZipFile(zp) as zf:
             names = set(zf.namelist())
-        assert "main.png" in names
-        assert "tab.png" in names
+        assert "main.png" in names and "tab.png" in names
         for i in range(1, 9):
             assert f"stamp_{i:02d}.png" in names
 
-    def test_failed_items_not_in_zip(self, tmp_path):
+    def test_failed_items_excluded(self, tmp_path):
         stickers_dir = tmp_path / "stickers"
         stickers_dir.mkdir()
-        results = [self._make_sticker(stickers_dir, i) for i in range(1, 8)]
-        results.append(GenerationResult(position=8, success=False, error="oops"))
+        results = [self._sticker(stickers_dir, i) for i in range(1, 8)]
+        results.append(GenerationResult(position=8, success=False, error="fail"))
         Image.new("RGBA", (240, 240)).save(tmp_path / "main.png", "PNG")
         Image.new("RGBA", (96, 74)).save(tmp_path / "tab.png", "PNG")
-
-        zip_path = _build_zip(tmp_path, stickers_dir, results)
-        with zipfile.ZipFile(zip_path) as zf:
-            names = zf.namelist()
-        assert "stamp_08.png" not in names
+        zp = _build_zip(tmp_path, stickers_dir, results)
+        with zipfile.ZipFile(zp) as zf:
+            assert "stamp_08.png" not in zf.namelist()
 
 
 # ---------------------------------------------------------------------------
-# Integration: generate_stamp_set (fallback path)
+# Unit: _save_main_tab
+# ---------------------------------------------------------------------------
+
+class TestSaveMainTab:
+    def test_creates_main_and_tab(self, tmp_path, sample_png):
+        src = sample_png("sticker.png", (300, 280))
+        _save_main_tab(src, tmp_path)
+        assert (tmp_path / "main.png").exists()
+        assert (tmp_path / "tab.png").exists()
+
+    def test_main_exact_size(self, tmp_path, sample_png):
+        src = sample_png("sticker.png", (300, 280))
+        _save_main_tab(src, tmp_path)
+        img = Image.open(tmp_path / "main.png")
+        assert img.size == (MAIN_W, MAIN_H)
+
+    def test_tab_exact_size(self, tmp_path, sample_png):
+        src = sample_png("sticker.png", (300, 280))
+        _save_main_tab(src, tmp_path)
+        img = Image.open(tmp_path / "tab.png")
+        assert img.size == (TAB_W, TAB_H)
+
+
+# ---------------------------------------------------------------------------
+# Integration: generate_stamp_set
 # ---------------------------------------------------------------------------
 
 class TestGenerateStampSet:
-    def _make_8_specs(self, photo: Path) -> list[StampItemSpec]:
-        return [
-            StampItemSpec(position=i, photo_path=str(photo), caption=f"テスト{i}")
-            for i in range(1, 9)
-        ]
-
-    def test_all_succeed(self, tmp_path, make_png):
-        photo = make_png("photo.png", (300, 400))
-        specs = self._make_8_specs(photo)
-        summary = generate_stamp_set(specs, tmp_path / "out")
-
+    def test_all_8_succeed(self, tmp_path, sample_png):
+        photo = sample_png("photo.png", (200, 250))
+        summary = generate_stamp_set(_make_8_specs(photo), tmp_path / "out")
         assert summary.success_count == 8
         assert summary.failed_positions == []
 
-    def test_sticker_files_created(self, tmp_path, make_png):
-        photo = make_png("photo.png", (300, 400))
-        specs = self._make_8_specs(photo)
-        summary = generate_stamp_set(specs, tmp_path / "out")
-
+    def test_sticker_files_exist(self, tmp_path, sample_png):
+        photo = sample_png("photo.png", (200, 250))
+        summary = generate_stamp_set(_make_8_specs(photo), tmp_path / "out")
         out = Path(summary.set_output_dir)
         for i in range(1, 9):
             assert (out / "stickers" / f"stamp_{i:02d}.png").exists()
 
-    def test_main_and_tab_created(self, tmp_path, make_png):
-        photo = make_png("photo.png", (300, 400))
-        specs = self._make_8_specs(photo)
-        summary = generate_stamp_set(specs, tmp_path / "out")
-
+    def test_main_tab_created(self, tmp_path, sample_png):
+        photo = sample_png("photo.png", (200, 250))
+        summary = generate_stamp_set(_make_8_specs(photo), tmp_path / "out")
         out = Path(summary.set_output_dir)
         assert (out / "main.png").exists()
         assert (out / "tab.png").exists()
 
-    def test_zip_created(self, tmp_path, make_png):
-        photo = make_png("photo.png", (300, 400))
-        specs = self._make_8_specs(photo)
-        summary = generate_stamp_set(specs, tmp_path / "out")
+    def test_zip_created(self, tmp_path, sample_png):
+        photo = sample_png("photo.png", (200, 250))
+        summary = generate_stamp_set(_make_8_specs(photo), tmp_path / "out")
+        assert summary.zip_path and Path(summary.zip_path).exists()
 
-        assert summary.zip_path is not None
-        assert Path(summary.zip_path).exists()
+    def test_preview_images_created(self, tmp_path, sample_png):
+        photo = sample_png("photo.png", (200, 250))
+        summary = generate_stamp_set(_make_8_specs(photo), tmp_path / "out")
+        for r in summary.results:
+            if r.success:
+                assert r.preview_path and Path(r.preview_path).exists()
 
-    def test_missing_photo_recorded_as_error(self, tmp_path, make_png):
-        photo = make_png("photo.png")
-        specs = self._make_8_specs(photo)
-        # Replace slot 5 with a non-existent path
+    def test_sticker_fits_spec(self, tmp_path, sample_png):
+        photo = sample_png("photo.png", (200, 250))
+        summary = generate_stamp_set(_make_8_specs(photo), tmp_path / "out")
+        for r in summary.results:
+            if r.success:
+                img = Image.open(r.sticker_path)
+                assert img.width <= STICKER_MAX_W and img.height <= STICKER_MAX_H
+
+    def test_missing_photo_recorded_as_error(self, tmp_path, sample_png):
+        photo = sample_png("photo.png")
+        specs = _make_8_specs(photo)
         specs[4] = StampItemSpec(position=5, photo_path="/no/such/file.png", caption="?")
-
         summary = generate_stamp_set(specs, tmp_path / "out")
         assert 5 in summary.failed_positions
         assert summary.success_count == 7
+
+    @pytest.mark.parametrize("style", ["line_stamp", "yuru_chara", "pop_art", "manga", "sticker"])
+    def test_all_styles(self, tmp_path, sample_png, style):
+        photo = sample_png("photo.png")
+        specs = [StampItemSpec(position=i, photo_path=str(photo), caption="テスト", style=style)
+                 for i in range(1, 9)]
+        summary = generate_stamp_set(specs, tmp_path / f"out_{style}")
+        assert summary.success_count == 8
+
+    def test_japanese_caption_in_sticker(self, tmp_path, sample_png):
+        photo = sample_png("photo.png")
+        specs = [
+            StampItemSpec(position=i, photo_path=str(photo), caption=cap)
+            for i, cap in enumerate(
+                ["ありがとう", "了解", "おつかれさま", "OK", "ごめん",
+                 "いってきます", "おやすみ", "最高"], start=1
+            )
+        ]
+        summary = generate_stamp_set(specs, tmp_path / "out")
+        assert summary.success_count == 8, f"Failed: {summary.failed_positions}"
 
 
 # ---------------------------------------------------------------------------
@@ -173,22 +190,19 @@ class TestGenerateStampSet:
 # ---------------------------------------------------------------------------
 
 class TestGenerationSummary:
-    def _summary(self, successes: list[int], failures: list[int]) -> GenerationSummary:
+    def _summary(self, ok, fail):
         results = (
-            [GenerationResult(p, success=True) for p in successes]
-            + [GenerationResult(p, success=False, error="err") for p in failures]
+            [GenerationResult(p, success=True) for p in ok]
+            + [GenerationResult(p, success=False, error="err") for p in fail]
         )
-        return GenerationSummary(set_output_dir="/tmp/x", zip_path=None, results=results)
+        return GenerationSummary(set_output_dir="/x", zip_path=None, results=results)
 
     def test_success_count(self):
-        s = self._summary([1, 2, 3], [4])
-        assert s.success_count == 3
+        assert self._summary([1, 2, 3], [4]).success_count == 3
 
     def test_failed_positions(self):
-        s = self._summary([1, 3, 5, 7], [2, 4, 6, 8])
-        assert sorted(s.failed_positions) == [2, 4, 6, 8]
+        assert sorted(self._summary([1, 3], [2, 4]).failed_positions) == [2, 4]
 
     def test_all_ok(self):
         s = self._summary(list(range(1, 9)), [])
-        assert s.success_count == 8
-        assert s.failed_positions == []
+        assert s.success_count == 8 and s.failed_positions == []
