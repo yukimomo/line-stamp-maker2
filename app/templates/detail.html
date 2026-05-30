@@ -1,5 +1,8 @@
 {% extends "base.html" %}
-{% block title %}{{ stamp_set['name'] }} - スタンプ詳細{% endblock %}
+{% block title %}{{ stamp_set['name'] }} - セットプレビュー{% endblock %}
+{% set tmpl_icons = {
+  'simple_circle':'⭕','pop_star':'⭐','heart':'❤️','speech_bubble':'💬',
+  'birthday':'🎂','seasonal_sakura':'🌸','cool_badge':'🏅' } %}
 {% block content %}
 
 <div class="mb-3">
@@ -13,12 +16,15 @@
   <div class="card-body">
     <div class="d-flex flex-wrap align-items-start gap-3">
       <div class="flex-grow-1">
-        <h2 class="fw-bold mb-1">{{ stamp_set['name'] }}</h2>
+        <h2 class="fw-bold mb-1">
+          {{ THEMES[stamp_set['theme']].icon if stamp_set['theme'] in THEMES else '' }}
+          {{ stamp_set['name'] }}
+        </h2>
         <p class="text-muted mb-1">{{ stamp_set['description'] or '（説明なし）' }}</p>
         <div class="d-flex flex-wrap gap-2 small text-muted">
-          <span><i class="bi bi-clock me-1"></i>{{ stamp_set['created_at'] }}</span>
-          <span><i class="bi bi-palette me-1"></i>{{ TEMPLATES.get(stamp_set['style'], stamp_set['style']) }}</span>
+          <span><i class="bi bi-palette2 me-1"></i>{{ THEMES[stamp_set['theme']].label if stamp_set['theme'] in THEMES else stamp_set['theme'] }}</span>
           <span><i class="bi bi-chat-quote me-1"></i>{{ TEXT_STYLES.get(stamp_set['text_style'], stamp_set['text_style']) }}</span>
+          <span><i class="bi bi-clock me-1"></i>更新 {{ stamp_set['updated_at'] }}</span>
         </div>
       </div>
       <span class="badge fs-6
@@ -34,6 +40,29 @@
   </div>
 </div>
 
+<!-- main.png / tab.png プレビュー -->
+{% if stamp_set['status'] in ('generated', 'partial') %}
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-star me-2"></i>申請用代表画像</h5>
+    <div class="d-flex gap-4 align-items-end flex-wrap">
+      <div class="text-center">
+        <img src="{{ (stamp_set['output_dir'] ~ '/main.png') | photourl }}"
+             style="width:120px;height:120px;object-fit:contain;background:#f8f9fa;border-radius:8px"
+             alt="main.png">
+        <div class="small text-muted mt-1">main.png (240×240)</div>
+      </div>
+      <div class="text-center">
+        <img src="{{ (stamp_set['output_dir'] ~ '/tab.png') | photourl }}"
+             style="width:96px;height:74px;object-fit:contain;background:#f8f9fa;border-radius:8px"
+             alt="tab.png">
+        <div class="small text-muted mt-1">tab.png (96×74)</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- 規格チェック -->
 {% if validation %}
   {% if validation.is_valid %}
@@ -47,94 +76,123 @@
   </div>
   {% endif %}
   {% if validation.warnings %}
-  <div class="alert alert-warning small">
+  <div class="alert alert-warning small mb-4">
+    <i class="bi bi-exclamation-circle me-1"></i>
     {% for w in validation.warnings %}・{{ w }}<br>{% endfor %}
   </div>
   {% endif %}
 {% endif %}
 
-<!-- スタンプ一覧 (比較プレビュー付き) -->
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-body">
-    <h5 class="card-title mb-3">
-      <i class="bi bi-grid me-2"></i>スタンプ一覧（8枚）
-      {% if stamp_set['status'] == 'generated' %}
-      <small class="text-muted fw-normal ms-2" style="font-size:.8rem">
-        写真 / スタイル適用後 / 完成スタンプ の比較
-      </small>
-      {% endif %}
-    </h5>
-    <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3">
-      {% for item in items %}
-      <div class="col">
-        <div class="card h-100 border
-          {% if item['error_message'] %}border-danger
-          {% elif item['sticker_path'] %}border-success
-          {% else %}border-secondary{% endif %}">
-          <div class="card-body p-2 text-center">
-            <div class="text-muted small fw-bold mb-1">{{ item['position'] }}</div>
+<!-- セット全体プレビュー + インライン編集 -->
+<form method="post" action="{{ url_for('stamps.edit_set', set_id=stamp_set['id']) }}" id="edit-form">
+  <input type="hidden" name="name" value="{{ stamp_set['name'] }}">
+  <input type="hidden" name="description" value="{{ stamp_set['description'] }}">
 
-            {% if item['sticker_path'] %}
-              <!-- 生成済み: 3段比較 -->
-              <div class="d-flex justify-content-center gap-1 mb-1">
-                <!-- 元写真 -->
-                <div class="text-center" style="width:30%">
-                  <img src="{{ item['photo_path'] | photourl }}"
-                       style="width:100%;height:60px;object-fit:cover;border-radius:4px"
-                       alt="元" title="元写真">
-                  <div style="font-size:.6rem;color:#999">元</div>
-                </div>
-                <!-- スタイル適用後 -->
-                {% if item['preview_path'] %}
-                <div class="text-center" style="width:30%">
-                  <img src="{{ item['preview_path'] | photourl }}"
-                       style="width:100%;height:60px;object-fit:cover;border-radius:4px"
-                       alt="加工" title="スタイル適用後">
-                  <div style="font-size:.6rem;color:#999">加工</div>
-                </div>
-                {% endif %}
-                <!-- 完成スタンプ -->
-                <div class="text-center" style="width:{% if item['preview_path'] %}30{% else %}60{% endif %}%">
-                  <img src="{{ item['sticker_path'] | photourl }}"
-                       style="width:100%;height:60px;object-fit:contain;border-radius:4px;background:#f8f9fa"
-                       alt="完成" title="完成スタンプ">
-                  <div style="font-size:.6rem;color:#28a745;font-weight:600">完成</div>
-                </div>
-              </div>
-              <!-- 完成スタンプ大表示 -->
-              <img src="{{ item['sticker_path'] | photourl }}"
-                   class="stamp-thumb mb-1"
-                   alt="スタンプ {{ item['position'] }}"
-                   style="max-height:130px">
-            {% else %}
-              <!-- 未生成: 元写真のみ表示 -->
-              <div class="stamp-thumb mb-1 d-flex align-items-center justify-content-center
-                           bg-light rounded" style="height:130px; overflow:hidden">
-                {% if item['error_message'] %}
-                  <i class="bi bi-x-circle fs-2 text-danger"></i>
-                {% else %}
-                  <img src="{{ item['photo_path'] | photourl }}"
-                       style="max-width:100%;max-height:100%;object-fit:contain">
-                {% endif %}
-              </div>
-            {% endif %}
-
-            <div class="small fw-semibold text-truncate" title="{{ item['caption'] }}">
-              {{ item['caption'] or '（セリフなし）' }}
-            </div>
-            {% if item['error_message'] %}
-            <div class="text-danger mt-1" style="font-size:.72rem" title="{{ item['error_message'] }}">
-              <i class="bi bi-exclamation-circle me-1"></i>
-              {{ item['error_message'][:70] }}{% if item['error_message']|length > 70 %}…{% endif %}
-            </div>
-            {% endif %}
-          </div>
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h5 class="card-title mb-0"><i class="bi bi-grid-3x3-gap me-2"></i>セット全体プレビュー（8枚）</h5>
+        <div class="d-flex align-items-center gap-2">
+          <label class="small text-muted mb-0">文字スタイル</label>
+          <select class="form-select form-select-sm" name="text_style" style="width:auto">
+            {% for key, label in TEXT_STYLES.items() %}
+            <option value="{{ key }}" {% if key==stamp_set['text_style'] %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
         </div>
       </div>
-      {% endfor %}
+
+      <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3" id="slot-grid">
+        {% for item in items %}
+        <div class="col slot-col" data-position="{{ item['position'] }}">
+          <div class="card h-100 border
+            {% if item['error_message'] %}border-danger
+            {% elif item['sticker_path'] %}border-success
+            {% else %}border-secondary{% endif %}">
+            <div class="card-body p-2">
+
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="badge bg-secondary">{{ item['position'] }}</span>
+                <span class="d-flex gap-1">
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 reorder-btn"
+                          data-dir="up" title="左へ">
+                    <i class="bi bi-arrow-left"></i>
+                  </button>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 reorder-btn"
+                          data-dir="down" title="右へ">
+                    <i class="bi bi-arrow-right"></i>
+                  </button>
+                </span>
+              </div>
+
+              <!-- 画像表示 -->
+              <div class="position-relative">
+                {% if item['sticker_path'] %}
+                  <img src="{{ item['sticker_path'] | photourl }}"
+                       class="w-100 mb-1"
+                       style="height:120px;object-fit:contain;background:#f8f9fa;border-radius:6px"
+                       alt="スタンプ {{ item['position'] }}">
+                {% else %}
+                  <div class="w-100 mb-1 d-flex align-items-center justify-content-center bg-light rounded"
+                       style="height:120px;overflow:hidden">
+                    {% if item['error_message'] %}
+                      <i class="bi bi-x-circle fs-2 text-danger"></i>
+                    {% else %}
+                      <img src="{{ item['photo_path'] | photourl }}"
+                           style="max-width:100%;max-height:100%;object-fit:contain">
+                    {% endif %}
+                  </div>
+                {% endif %}
+                <button type="button"
+                        class="btn btn-sm btn-light position-absolute top-0 end-0 m-1 swap-btn"
+                        data-position="{{ item['position'] }}" title="写真を差し替え">
+                  <i class="bi bi-arrow-repeat"></i>
+                </button>
+              </div>
+
+              <!-- セリフ編集 -->
+              <input type="text" class="form-control form-control-sm mb-1 caption-input"
+                     name="caption_{{ item['position'] }}" value="{{ item['caption'] }}"
+                     placeholder="セリフ" data-slot="{{ item['position'] }}"
+                     list="caption-datalist">
+
+              <!-- テンプレート選択 -->
+              <select class="form-select form-select-sm" name="template_{{ item['position'] }}">
+                {% for key, label in TEMPLATES.items() %}
+                <option value="{{ key }}"
+                  {% if key == (item['item_template'] or stamp_set['style']) %}selected{% endif %}>
+                  {{ tmpl_icons.get(key, '') }} {{ label }}
+                </option>
+                {% endfor %}
+              </select>
+
+              {% if item['error_message'] %}
+              <div class="text-danger mt-1" style="font-size:.72rem" title="{{ item['error_message'] }}">
+                <i class="bi bi-exclamation-circle me-1"></i>
+                {{ item['error_message'][:60] }}{% if item['error_message']|length > 60 %}…{% endif %}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <datalist id="caption-datalist">
+        {% for cat, caps in caption_templates.items() %}
+          {% for c in caps %}<option value="{{ c }}">{% endfor %}
+        {% endfor %}
+      </datalist>
+
+      <div class="mt-3">
+        <button type="submit" class="btn btn-outline-primary">
+          <i class="bi bi-save me-1"></i>編集内容を保存
+        </button>
+        <span class="text-muted small ms-2">セリフ・テンプレート・文字スタイルの変更を保存します</span>
+      </div>
     </div>
   </div>
-</div>
+</form>
 
 <!-- 操作 -->
 <div class="card border-0 shadow-sm mb-4">
@@ -142,8 +200,7 @@
     <h5 class="card-title mb-3"><i class="bi bi-gear me-2"></i>操作</h5>
     <div class="d-flex flex-wrap gap-3 align-items-center">
 
-      <form method="post" action="{{ url_for('stamps.generate', set_id=stamp_set['id']) }}"
-            id="generate-form">
+      <form method="post" action="{{ url_for('stamps.generate', set_id=stamp_set['id']) }}" id="generate-form">
         <button type="submit" id="generate-btn" class="btn btn-success btn-lg">
           <i class="bi bi-magic me-1"></i>
           {% if stamp_set['status'] in ('generated', 'partial') %}再生成{% else %}スタンプを生成{% endif %}
@@ -178,25 +235,112 @@
     {% elif stamp_set['status'] in ('draft', 'partial') %}
     <div class="alert alert-info mt-3 mb-0">
       <i class="bi bi-info-circle me-1"></i>
-      「スタンプを生成」を押すとキャラクター化処理が始まります。写真8枚で約10〜30秒かかります。
-    </div>
-    {% elif stamp_set['status'] == 'error' %}
-    <div class="alert alert-danger mt-3 mb-0">
-      <i class="bi bi-exclamation-triangle me-1"></i>
-      生成に失敗しました。各スロットのエラーを確認し、リセット→再生成を試してください。
+      編集が済んだら「スタンプを生成」を押してください。写真8枚で約10〜30秒かかります。
     </div>
     {% endif %}
+  </div>
+</div>
+
+<!-- 写真差し替えモーダル -->
+<div class="modal fade" id="swap-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">写真を差し替え（スロット <span id="swap-slot-num"></span>）</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="form-control mb-3" id="photo-search" placeholder="絞り込み…">
+        <div id="photo-loading" class="text-center py-4 text-muted">
+          <div class="spinner-border spinner-border-sm me-2"></div>読み込み中…
+        </div>
+        <div id="photo-grid" class="d-flex flex-wrap gap-2"></div>
+      </div>
+    </div>
   </div>
 </div>
 
 {% endblock %}
 {% block scripts %}
 <script>
+const SET_ID = {{ stamp_set['id'] }};
+
+// ── generate spinner ──
 document.getElementById('generate-form').addEventListener('submit', function () {
   const btn = document.getElementById('generate-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成中…';
   document.getElementById('loading-overlay').style.display = 'flex';
+});
+
+// ── reorder (arrows) ──
+document.querySelectorAll('.reorder-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const col = btn.closest('.slot-col');
+    const pos = parseInt(col.dataset.position);
+    const order = [...document.querySelectorAll('.slot-col')].map(c => parseInt(c.dataset.position));
+    const idx = order.indexOf(pos);
+    const swapWith = btn.dataset.dir === 'up' ? idx - 1 : idx + 1;
+    if (swapWith < 0 || swapWith >= order.length) return;
+    [order[idx], order[swapWith]] = [order[swapWith], order[idx]];
+    fetch(`/stamps/${SET_ID}/reorder`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({order})
+    }).then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+  });
+});
+
+// ── photo swap ──
+let swapPosition = null, allPhotos = [];
+const swapModal = new bootstrap.Modal(document.getElementById('swap-modal'));
+
+document.querySelectorAll('.swap-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    swapPosition = btn.dataset.position;
+    document.getElementById('swap-slot-num').textContent = swapPosition;
+    document.getElementById('photo-search').value = '';
+    swapModal.show();
+    if (allPhotos.length === 0) fetchPhotos(); else renderGrid(allPhotos);
+  });
+});
+
+function fetchPhotos() {
+  document.getElementById('photo-loading').classList.remove('d-none');
+  fetch('/api/photos').then(r => r.json()).then(data => {
+    allPhotos = data;
+    document.getElementById('photo-loading').classList.add('d-none');
+    renderGrid(data);
+  });
+}
+
+function renderGrid(photos) {
+  const grid = document.getElementById('photo-grid');
+  grid.innerHTML = '';
+  photos.forEach(photo => {
+    const img = document.createElement('img');
+    img.src = '/photo?path=' + encodeURIComponent(photo.path);
+    img.className = 'photo-grid-item';
+    img.loading = 'lazy';
+    img.onerror = () => { img.style.display = 'none'; };
+    img.addEventListener('click', () => doSwap(photo.path));
+    grid.appendChild(img);
+  });
+}
+
+function doSwap(photoPath) {
+  const fd = new FormData();
+  fd.append('position', swapPosition);
+  fd.append('photo_path', photoPath);
+  fetch(`/stamps/${SET_ID}/swap_photo`, {method: 'POST', body: fd})
+    .then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+}
+
+document.getElementById('photo-search').addEventListener('input', function () {
+  const q = this.value.toLowerCase();
+  renderGrid(q ? allPhotos.filter(p =>
+    p.path.toLowerCase().includes(q) || (p.caption||'').toLowerCase().includes(q)
+  ) : allPhotos);
 });
 </script>
 {% endblock %}

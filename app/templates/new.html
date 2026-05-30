@@ -18,7 +18,7 @@
   <!-- セット情報 -->
   <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
-      <h5 class="card-title mb-3">セット情報</h5>
+      <h5 class="card-title mb-3"><i class="bi bi-card-text me-2"></i>セット情報</h5>
       <div class="row g-3">
         <div class="col-md-6">
           <label class="form-label fw-semibold">セット名 <span class="text-danger">*</span></label>
@@ -32,65 +32,39 @@
     </div>
   </div>
 
-  <!-- デザインテンプレート -->
+  <!-- テーマ選択 -->
   <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
-      <h5 class="card-title mb-1"><i class="bi bi-stars me-2"></i>デザインテンプレート</h5>
-      <p class="text-muted small mb-3">丸切り抜き写真に装飾を追加します</p>
-      {% set icons = {
-        'simple_circle':   '⭕',
-        'pop_star':        '⭐',
-        'heart':           '❤️',
-        'speech_bubble':   '💬',
-        'birthday':        '🎂',
-        'seasonal_sakura': '🌸',
-        'cool_badge':      '🏅',
-      } %}
-      <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 g-2 mb-3">
-        {% for key, label in TEMPLATES.items() %}
+      <h5 class="card-title mb-1"><i class="bi bi-palette2 me-2"></i>セットテーマ</h5>
+      <p class="text-muted small mb-3">テーマを選ぶと、テンプレートとセリフが自動で割り当てられます（あとで個別編集できます）</p>
+      <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-3">
+        {% for key, cfg in THEMES.items() %}
         <div class="col">
-          <input type="radio" class="btn-check" name="style" id="tmpl-{{ key }}"
+          <input type="radio" class="btn-check" name="theme" id="theme-{{ key }}"
                  value="{{ key }}" {% if loop.first %}checked{% endif %}>
-          <label class="btn btn-outline-success w-100 py-2 px-2 text-start"
-                 for="tmpl-{{ key }}" style="font-size:.82rem; min-height:3.8rem;">
-            <span style="font-size:1.1rem">{{ icons.get(key, '🔵') }}</span>
-            <span class="ms-1">{{ label }}</span>
+          <label class="btn btn-outline-success w-100 h-100 p-3 text-start theme-card" for="theme-{{ key }}">
+            <div class="d-flex align-items-center mb-1">
+              <span style="font-size:1.6rem">{{ cfg.icon }}</span>
+              <span class="fw-bold ms-2">{{ cfg.label }}</span>
+            </div>
+            <div class="small text-muted theme-desc">{{ cfg.description }}</div>
+            <div class="small mt-2">
+              {% for cap in cfg.captions[:4] %}
+              <span class="badge bg-light text-dark border me-1 mb-1">{{ cap }}</span>
+              {% endfor %}
+              <span class="text-muted">…</span>
+            </div>
           </label>
         </div>
         {% endfor %}
       </div>
-      <div class="col-sm-6">
-        <label class="form-label fw-semibold">文字スタイル</label>
-        <select class="form-select" name="text_style">
-          {% for key, label in TEXT_STYLES.items() %}
-          <option value="{{ key }}" {% if key=='bubble' %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
     </div>
   </div>
 
-  <!-- セリフテンプレート -->
+  <!-- 写真スロット -->
   <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
-      <h5 class="card-title mb-2">セリフテンプレート</h5>
-      <p class="text-muted small mb-2">セリフ欄にフォーカスしてからボタンを押すと入力されます</p>
-      {% for cat, items in caption_templates.items() %}
-      <div class="mb-1">
-        <span class="badge bg-secondary me-1">{{ cat }}</span>
-        {% for t in items %}
-        <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2 me-1 mb-1 tmpl-btn"
-                data-text="{{ t }}">{{ t }}</button>
-        {% endfor %}
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-
-  <!-- 写真 & セリフスロット -->
-  <div class="card border-0 shadow-sm mb-4">
-    <div class="card-body">
-      <h5 class="card-title mb-3">写真とセリフ（8枚を選択）</h5>
+      <h5 class="card-title mb-3"><i class="bi bi-images me-2"></i>写真を選択（8枚）</h5>
       <div class="row row-cols-2 row-cols-sm-4 g-3">
         {% for i in range(1, 9) %}
         <div class="col">
@@ -104,24 +78,19 @@
               </span>
             </div>
             <input type="hidden" name="photo_{{ i }}" id="photo-{{ i }}">
-            <input type="text" class="form-control form-control-sm caption-input"
-                   name="caption_{{ i }}" id="caption-{{ i }}"
-                   placeholder="セリフ" data-slot="{{ i }}"
-                   list="caption-datalist"
-                   value="{{ all_templates[i - 1] if i <= all_templates|length else '' }}">
           </div>
         </div>
         {% endfor %}
       </div>
-      <datalist id="caption-datalist">
-        {% for t in all_templates %}<option value="{{ t }}">{% endfor %}
-      </datalist>
+      <p class="text-muted small mt-2 mb-0">
+        <i class="bi bi-info-circle me-1"></i>セリフは選んだテーマと写真の解析結果から自動で提案されます
+      </p>
     </div>
   </div>
 
   <div class="d-flex gap-2">
     <button type="submit" class="btn btn-success btn-lg px-4">
-      <i class="bi bi-save me-1"></i>保存してプレビューへ
+      <i class="bi bi-magic me-1"></i>自動割り当てしてプレビューへ
     </button>
     <a href="{{ url_for('stamps.index') }}" class="btn btn-outline-secondary btn-lg">キャンセル</a>
   </div>
@@ -158,17 +127,8 @@
 {% endblock %}
 {% block scripts %}
 <script>
-let currentSlot = null, allPhotos = [], focusedSlot = null;
+let currentSlot = null, allPhotos = [];
 const photoModal = new bootstrap.Modal(document.getElementById('photo-modal'));
-
-document.querySelectorAll('.tmpl-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (focusedSlot) document.getElementById(`caption-${focusedSlot}`).value = btn.dataset.text;
-  });
-});
-document.querySelectorAll('.caption-input').forEach(inp => {
-  inp.addEventListener('focus', () => { focusedSlot = inp.dataset.slot; });
-});
 
 function openModal(slot) {
   currentSlot = slot;
