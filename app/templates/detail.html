@@ -17,11 +17,8 @@
         <p class="text-muted mb-1">{{ stamp_set['description'] or '（説明なし）' }}</p>
         <div class="d-flex flex-wrap gap-2 small text-muted">
           <span><i class="bi bi-clock me-1"></i>{{ stamp_set['created_at'] }}</span>
-          <span><i class="bi bi-palette me-1"></i>{{ STYLES.get(stamp_set['style'], stamp_set['style']) }}</span>
-          <span><i class="bi bi-chat-quote me-1"></i>{{ stamp_set['text_style'] }}</span>
-          {% if stamp_set['expression'] != 'none' %}
-          <span><i class="bi bi-emoji-smile me-1"></i>{{ EXPRESSIONS.get(stamp_set['expression'], '') }}</span>
-          {% endif %}
+          <span><i class="bi bi-palette me-1"></i>{{ TEMPLATES.get(stamp_set['style'], stamp_set['style']) }}</span>
+          <span><i class="bi bi-chat-quote me-1"></i>{{ TEXT_STYLES.get(stamp_set['text_style'], stamp_set['text_style']) }}</span>
         </div>
       </div>
       <span class="badge fs-6
