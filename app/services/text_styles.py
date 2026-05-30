@@ -200,7 +200,7 @@ def _bubble(img: Image.Image, text: str, font) -> Image.Image:
     tail = 13
 
     bx = (w - bw) // 2
-    by = h - bh - tail - 10
+    by = h - bh - 10          # bubble sits at the bottom; tail goes UP above it
 
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ld = ImageDraw.Draw(layer)
@@ -212,14 +212,14 @@ def _bubble(img: Image.Image, text: str, font) -> Image.Image:
         outline=(0, 0, 0, 255),
         width=3,
     )
-    # Tail
+    # Tail points UPWARD toward the character above
     cx = bx + bw // 2
     ld.polygon(
-        [(cx - 9, by + bh - 1), (cx + 9, by + bh - 1), (cx, by + bh + tail)],
+        [(cx - 9, by + 1), (cx + 9, by + 1), (cx, by - tail)],
         fill=(255, 255, 255, 235),
     )
-    ld.line([(cx - 9, by + bh), (cx, by + bh + tail)], fill=(0, 0, 0, 255), width=3)
-    ld.line([(cx + 9, by + bh), (cx, by + bh + tail)], fill=(0, 0, 0, 255), width=3)
+    ld.line([(cx - 9, by), (cx, by - tail)], fill=(0, 0, 0, 255), width=3)
+    ld.line([(cx + 9, by), (cx, by - tail)], fill=(0, 0, 0, 255), width=3)
 
     img = Image.alpha_composite(img, layer)
     draw2 = ImageDraw.Draw(img)
