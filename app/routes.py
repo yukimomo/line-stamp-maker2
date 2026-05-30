@@ -16,6 +16,7 @@ from .services.validator import validate_stamp_set
 from .services.stamp_templates import TEMPLATES, auto_select_template
 from .services.stamp_themes import THEMES, assign_captions_to_photos
 from .services.text_styles import TEXT_STYLES
+import json
 
 bp = Blueprint("stamps", __name__)
 
@@ -102,6 +103,14 @@ def create_set():
     selected_photos = [all_photos.get(p, {"path": p}) for p in selected_paths[:8]]
     captions = assign_captions_to_photos(selected_photos, theme)
 
+    # Per-photo template: auto-select from analysis; fall back to theme rotation
+    templates: list[str] = []
+    for i, photo in enumerate(selected_photos):
+        risks = (photo.get("analysis") or {}).get("risks") or {}
+        auto = auto_select_template(photo, is_dark=bool(risks.get("dark")))
+        # If auto returns the generic default, use the theme's slot template
+        templates.append(auto if auto != "simple_circle" else cfg.templates[i])
+
     db = get_db()
     cur = db.execute(
         "INSERT INTO stamp_sets (name, description, status, theme, style, text_style, updated_at) "
@@ -114,7 +123,7 @@ def create_set():
         db.execute(
             "INSERT INTO stamp_items (set_id, position, photo_path, caption, item_template) "
             "VALUES (?,?,?,?,?)",
-            (set_id, i + 1, photo["path"], captions[i], cfg.templates[i]),
+            (set_id, i + 1, photo["path"], captions[i], templates[i]),
         )
     db.commit()
     return redirect(url_for("stamps.detail", set_id=set_id))
@@ -131,15 +140,23 @@ def detail(set_id: int):
     if stamp_set is None:
         abort(404)
 
-    items = db.execute(
+    rows = db.execute(
         "SELECT * FROM stamp_items WHERE set_id = ? ORDER BY position", (set_id,)
     ).fetchall()
+    # Parse per-item warnings JSON into a list for the template
+    items = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["warning_list"] = json.loads(r["warnings"]) if r["warnings"] else []
+        except (ValueError, TypeError):
+            d["warning_list"] = []
+        items.append(d)
 
     validation = None
     if stamp_set["status"] in ("generated", "partial") and stamp_set["output_dir"]:
         try:
-            item_dicts = [dict(i) for i in items]
-            report = validate_stamp_set(Path(stamp_set["output_dir"]), items=item_dicts)
+            report = validate_stamp_set(Path(stamp_set["output_dir"]), items=items)
             validation = {"is_valid": report.is_valid,
                           "errors": report.errors, "warnings": report.warnings}
         except Exception:
@@ -189,13 +206,24 @@ def edit_set(set_id: int):
         tmpl = request.form.get(f"template_{pos}", "")
         if tmpl not in TEMPLATES:
             tmpl = "simple_circle"
+        zoom = _clamp(request.form.get(f"zoom_{pos}", type=float), 0.5, 2.5, 1.0)
+        ox = _clamp(request.form.get(f"offset_x_{pos}", type=float), -0.5, 0.5, 0.0)
+        oy = _clamp(request.form.get(f"offset_y_{pos}", type=float), -0.5, 0.5, 0.0)
+        bri = _clamp(request.form.get(f"brightness_{pos}", type=float), -1.0, 1.0, 0.0)
         db.execute(
-            "UPDATE stamp_items SET caption=?, item_template=? WHERE id=?",
-            (caption, tmpl, item["id"]),
+            "UPDATE stamp_items SET caption=?, item_template=?, zoom=?, offset_x=?, "
+            "offset_y=?, brightness=? WHERE id=?",
+            (caption, tmpl, zoom, ox, oy, bri, item["id"]),
         )
     _touch(db, set_id)
     db.commit()
     return redirect(url_for("stamps.detail", set_id=set_id))
+
+
+def _clamp(val, lo: float, hi: float, default: float) -> float:
+    if val is None:
+        return default
+    return max(lo, min(hi, val))
 
 
 @bp.route("/stamps/<int:set_id>/swap_photo", methods=["POST"])
@@ -271,6 +299,10 @@ def generate(set_id: int):
             caption=i["caption"],
             style=(i["item_template"] or default_tmpl),
             text_style=text_style,
+            zoom=i["zoom"] if i["zoom"] is not None else 1.0,
+            offset_x=i["offset_x"] if i["offset_x"] is not None else 0.0,
+            offset_y=i["offset_y"] if i["offset_y"] is not None else 0.0,
+            brightness=i["brightness"] if i["brightness"] is not None else 0.0,
         )
         for i in items
     ]
@@ -297,11 +329,14 @@ def generate(set_id: int):
         return redirect(url_for("stamps.detail", set_id=set_id))
 
     for result in summary.results:
+        warnings_json = json.dumps(result.warnings, ensure_ascii=False) if result.warnings else None
         db.execute(
-            "UPDATE stamp_items SET sticker_path=?, preview_path=?, error_message=? WHERE set_id=? AND position=?",
+            "UPDATE stamp_items SET sticker_path=?, preview_path=?, warnings=?, error_message=? "
+            "WHERE set_id=? AND position=?",
             (
                 result.sticker_path,
                 result.preview_path,
+                warnings_json,
                 result.error if not result.success else None,
                 set_id, result.position,
             ),
