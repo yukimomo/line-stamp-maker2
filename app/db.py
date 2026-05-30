@@ -29,8 +29,13 @@ CREATE TABLE IF NOT EXISTS stamp_items (
     photo_path    TEXT    NOT NULL,
     caption       TEXT    NOT NULL DEFAULT '',
     item_template TEXT,
+    zoom          REAL    NOT NULL DEFAULT 1.0,
+    offset_x      REAL    NOT NULL DEFAULT 0.0,
+    offset_y      REAL    NOT NULL DEFAULT 0.0,
+    brightness    REAL    NOT NULL DEFAULT 0.0,
     sticker_path  TEXT,
     preview_path  TEXT,
+    warnings      TEXT,
     error_message TEXT,
     UNIQUE(set_id, position)
 );
@@ -47,6 +52,11 @@ _MIGRATIONS = [
     "ALTER TABLE stamp_sets ADD COLUMN updated_at TEXT",
     "ALTER TABLE stamp_items ADD COLUMN preview_path  TEXT",
     "ALTER TABLE stamp_items ADD COLUMN item_template TEXT",
+    "ALTER TABLE stamp_items ADD COLUMN zoom       REAL NOT NULL DEFAULT 1.0",
+    "ALTER TABLE stamp_items ADD COLUMN offset_x   REAL NOT NULL DEFAULT 0.0",
+    "ALTER TABLE stamp_items ADD COLUMN offset_y   REAL NOT NULL DEFAULT 0.0",
+    "ALTER TABLE stamp_items ADD COLUMN brightness REAL NOT NULL DEFAULT 0.0",
+    "ALTER TABLE stamp_items ADD COLUMN warnings   TEXT",
 ]
 
 # Run after _MIGRATIONS to back-fill nullable columns

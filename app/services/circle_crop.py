@@ -1,9 +1,9 @@
 """
 Circular crop with smart centering.
 
-Without face detection (no OpenCV/MediaPipe in this env), uses an
-upper-center heuristic: portrait photos keep subjects in the upper ~65%,
-so we bias the crop center upward.
+`circular_crop` is the legacy upper-center heuristic (kept for compatibility).
+`circular_crop_smart` uses face-detection results to center and zoom the crop
+on the subject, with manual zoom / offset overrides.
 
 Returns RGBA with transparent corners (outside the circle).
 """
@@ -11,6 +11,8 @@ Returns RGBA with transparent corners (outside the circle).
 from __future__ import annotations
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
+
+from .face_detect import FaceInfo, detect_faces
 
 
 def circular_crop(
@@ -51,6 +53,86 @@ def circular_crop(
     mask = Image.new("L", (size, size), 0)
     ImageDraw.Draw(mask).ellipse([0, 0, size - 1, size - 1], fill=255)
 
+    result = square.convert("RGBA")
+    result.putalpha(mask)
+    return result
+
+
+def circular_crop_smart(
+    img: Image.Image,
+    size: int = 220,
+    face_info: FaceInfo | None = None,
+    target_face_frac: float = 0.42,
+    zoom: float = 1.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+) -> Image.Image:
+    """
+    Face-centered circular crop with zoom control.
+
+    Args:
+        img:              Input image.
+        size:             Output circle diameter (px).
+        face_info:        Pre-computed FaceInfo; if None, detection runs here.
+        target_face_frac: Desired largest-face height as a fraction of the
+                          crop side (bigger = face appears larger).
+        zoom:             Manual zoom multiplier (>1 zooms in). Range ~0.5-2.5.
+        offset_x/offset_y:Manual recenter, fraction of image size (-0.5..0.5).
+
+    Returns:
+        RGBA circle image, size × size.
+    """
+    rgb = _to_rgb(img)
+    w, h = rgb.size
+    if face_info is None:
+        face_info = detect_faces(rgb)
+
+    # ── crop center ──────────────────────────────────────────────────────────
+    union = face_info.union_box
+    if union is not None:
+        cx = union[0] + union[2] / 2
+        cy = union[1] + union[3] / 2
+        # Nudge down slightly so the body/chin is included, not just eyes
+        cy += union[3] * 0.15
+    else:
+        # No face: upper-center default
+        cx = w / 2
+        cy = h * 0.42
+
+    cx += offset_x * w
+    cy += offset_y * h
+
+    # ── crop side ────────────────────────────────────────────────────────────
+    base = float(min(w, h))
+    if face_info.primary_box is not None:
+        face_h = face_info.primary_box[3]
+        side = face_h / max(0.15, target_face_frac)
+        # Ensure all faces fit (multi-person): cover union box with padding
+        if union is not None:
+            need = max(union[2], union[3]) * 1.4
+            side = max(side, need)
+    else:
+        side = base * 0.85
+
+    side = side / max(0.4, zoom)
+    side = max(40.0, min(side, base))   # never exceed the image's short edge
+
+    # ── clamp center so the square stays inside the image ───────────────────
+    half = side / 2
+    cx = max(half, min(cx, w - half))
+    cy = max(half, min(cy, h - half))
+
+    left = int(round(cx - half))
+    top = int(round(cy - half))
+    iside = int(round(side))
+    left = max(0, min(left, w - iside))
+    top = max(0, min(top, h - iside))
+
+    square = rgb.crop((left, top, left + iside, top + iside))
+    square = square.resize((size, size), Image.Resampling.LANCZOS)
+
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, size - 1, size - 1], fill=255)
     result = square.convert("RGBA")
     result.putalpha(mask)
     return result

@@ -47,7 +47,32 @@ TEMPLATES: dict[str, str] = {
     "birthday":        "バースデー（カラフル・お祝い）",
     "seasonal_sakura": "桜（和風・春モチーフ）",
     "cool_badge":      "バッジ（スタイリッシュ）",
+    "group_badge":     "グループ（複数人・横長）",
+    "action_pop":      "アクション（効果線・躍動感）",
+    "bright_frame":    "ブライト（暗め写真向け・明るい枠）",
+    "soft_pastel":     "ソフトパステル（やわらか・家族向け）",
 }
+
+# Per-template framing hints for face-centered cropping.
+#   target_face_frac: desired face height as fraction of crop side (bigger=closer)
+#   zoom:             default zoom multiplier
+ZOOM_PRESETS: dict[str, dict[str, float]] = {
+    "simple_circle":   {"target_face_frac": 0.45, "zoom": 1.0},
+    "pop_star":        {"target_face_frac": 0.50, "zoom": 1.0},
+    "heart":           {"target_face_frac": 0.48, "zoom": 1.0},
+    "speech_bubble":   {"target_face_frac": 0.38, "zoom": 1.0},   # leave room for bubble
+    "birthday":        {"target_face_frac": 0.44, "zoom": 1.0},
+    "seasonal_sakura": {"target_face_frac": 0.44, "zoom": 1.0},
+    "cool_badge":      {"target_face_frac": 0.46, "zoom": 1.0},
+    "group_badge":     {"target_face_frac": 0.30, "zoom": 0.85},   # wide, fit everyone
+    "action_pop":      {"target_face_frac": 0.50, "zoom": 1.05},
+    "bright_frame":    {"target_face_frac": 0.46, "zoom": 1.0},
+    "soft_pastel":     {"target_face_frac": 0.44, "zoom": 1.0},
+}
+
+
+def zoom_preset(template: str) -> dict[str, float]:
+    return ZOOM_PRESETS.get(template, ZOOM_PRESETS["simple_circle"])
 
 
 def apply_template(
@@ -80,30 +105,66 @@ def apply_template(
     return result
 
 
-def auto_select_template(photo_metadata: dict | None = None) -> str:
-    """Heuristic template selection from photo-selector analysis metadata."""
-    if not photo_metadata:
-        return "simple_circle"
+def auto_select_template(
+    photo_metadata: dict | None = None,
+    face_count: int | None = None,
+    is_dark: bool | None = None,
+) -> str:
+    """
+    Heuristic template selection from analysis metadata + optional signals.
 
-    analysis = photo_metadata.get("analysis") or {}
+    Args:
+        photo_metadata: photo dict with "analysis" {tags, caption, risks}.
+        face_count:     number of detected faces (from face_detect), if known.
+        is_dark:        whether the photo is dark (from risks or measurement).
+
+    Priority:
+        dark photo        → bright_frame
+        multiple people   → group_badge
+        movement/action   → action_pop
+        birthday/お祝い    → birthday
+        桜/spring          → seasonal_sakura
+        smile/happy/cute  → pop_star / heart
+        calm/quiet        → simple_circle / cool_badge / soft_pastel
+    """
+    analysis = (photo_metadata or {}).get("analysis") or {}
     tags = {t.lower() for t in analysis.get("tags", [])}
-    caption = analysis.get("caption", "").lower()
+    caption = (analysis.get("caption") or "").lower()
+    risks = analysis.get("risks") or {}
 
     def _match(words: set[str]) -> bool:
-        """True if any word is in tags OR appears as a substring of caption."""
         return bool(tags & words) or any(w in caption for w in words)
 
+    # ── dark / backlit ──
+    dark = is_dark if is_dark is not None else bool(risks.get("dark"))
+    if dark:
+        return "bright_frame"
+
+    # ── multiple people ──
+    multi = (face_count is not None and face_count >= 2) or _match(
+        {"group", "family", "friends", "multiple", "people", "crowd", "家族", "集合"}
+    )
+    if multi:
+        return "group_badge"
+
+    # ── movement / action ──
+    if _match({"movement", "running", "jump", "action", "sport", "play", "dance",
+               "走", "ジャンプ", "動き"}):
+        return "action_pop"
+
+    # ── events ──
     if _match({"birthday", "cake", "party", "celebrate", "誕生", "お祝い"}):
         return "birthday"
-
     if _match({"sakura", "cherry", "blossom", "spring", "桜", "春"}):
         return "seasonal_sakura"
 
-    if _match({"smile", "happy", "cute", "love", "heart", "笑顔"}):
+    # ── mood ──
+    if _match({"smile", "happy", "cute", "love", "heart", "fun", "笑顔", "楽し"}):
         return random.choice(["pop_star", "heart"])
-
-    if _match({"group", "family", "friends", "multiple", "家族"}):
-        return "simple_circle"
+    if _match({"baby", "child", "kid", "soft", "gentle", "赤ちゃん", "子ども", "家族"}):
+        return "soft_pastel"
+    if _match({"calm", "cool", "serious", "quiet", "落ち着"}):
+        return random.choice(["simple_circle", "cool_badge"])
 
     return "simple_circle"
 
@@ -504,6 +565,117 @@ def _tmpl_cool_badge(
     return canvas
 
 
+def _tmpl_group_badge(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """
+    Wide layout for group photos: the circle is shown larger and the badge ring
+    is wider, so multiple faces remain legible. Neutral teal background.
+    """
+    canvas = _canvas()
+    bg = _gradient_v((CANVAS_W, CANVAS_H), (70, 170, 175, 200), (40, 120, 140, 215))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Soft outer ring to frame the (larger) group circle
+    ring_r = CIRCLE_DIAM // 2 + 20
+    cx, cy = CIRCLE_CX, CIRCLE_CY
+    draw.ellipse([cx - ring_r, cy - ring_r, cx + ring_r - 1, cy + ring_r - 1],
+                 outline=(255, 255, 255, 200), width=5)
+
+    # "人数を活かす" — slightly thinner border so face area is maximized
+    _paste_circle(canvas, circle, white_px=10, black_px=3,
+                  shadow=True, border_color=(255, 255, 255))
+    if caption:
+        canvas = add_caption(canvas, caption, style="pop")
+    return canvas
+
+
+def _tmpl_action_pop(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """Manga-style concentration lines radiating from the subject + bold text."""
+    canvas = _canvas()
+    bg = _radial_gradient((CANVAS_W, CANVAS_H), (255, 255, 255, 200), (255, 230, 120, 210))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Concentration lines from center outward
+    cx, cy = CIRCLE_CX, CIRCLE_CY
+    inner_r = CIRCLE_DIAM // 2 + 6
+    outer_r = max(CANVAS_W, CANVAS_H)
+    rng = random.Random(7)
+    n = 36
+    for i in range(n):
+        a = 2 * math.pi * i / n + rng.uniform(-0.03, 0.03)
+        x1 = cx + inner_r * math.cos(a)
+        y1 = cy + inner_r * math.sin(a)
+        x2 = cx + outer_r * math.cos(a)
+        y2 = cy + outer_r * math.sin(a)
+        wdt = rng.choice([2, 3, 4])
+        draw.line([(x1, y1), (x2, y2)], fill=(40, 40, 40, 200), width=wdt)
+
+    _paste_circle(canvas, circle, white_px=12, black_px=5, shadow=True)
+    if caption:
+        canvas = add_caption(canvas, caption, style="pop")
+    return canvas
+
+
+def _tmpl_bright_frame(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """
+    For dark / backlit photos: bright warm background + extra-thick white border
+    so a dim subject still stands out.
+    """
+    canvas = _canvas()
+    bg = _radial_gradient((CANVAS_W, CANVAS_H), (255, 252, 235, 255), (255, 226, 150, 235))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Glow ring behind subject
+    glow_r = CIRCLE_DIAM // 2 + 22
+    cx, cy = CIRCLE_CX, CIRCLE_CY
+    glow = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse(
+        [cx - glow_r, cy - glow_r, cx + glow_r - 1, cy + glow_r - 1],
+        fill=(255, 255, 220, 180),
+    )
+    glow = glow.filter(ImageFilter.GaussianBlur(10))
+    canvas = Image.alpha_composite(canvas, glow)
+
+    # Extra-thick white border
+    _paste_circle(canvas, circle, white_px=20, black_px=3, shadow=True)
+    if caption:
+        canvas = add_caption(canvas, caption, style="pop")
+    return canvas
+
+
+def _tmpl_soft_pastel(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """Gentle pastel background with soft dots — for family / kids photos."""
+    canvas = _canvas()
+    bg = _gradient_v((CANVAS_W, CANVAS_H), (220, 240, 255, 205), (255, 235, 245, 215))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Soft polka dots
+    rng = random.Random(11)
+    dot_colors = [(255, 210, 225, 150), (210, 235, 255, 150), (255, 240, 200, 150)]
+    for _ in range(18):
+        dx = rng.randint(10, CANVAS_W - 10)
+        dy = rng.randint(10, CANVAS_H - 10)
+        r = rng.randint(6, 14)
+        draw.ellipse([dx - r, dy - r, dx + r, dy + r], fill=rng.choice(dot_colors))
+
+    _paste_circle(canvas, circle, white_px=14, black_px=0,
+                  shadow=True, border_color=(255, 248, 252))
+    if caption:
+        canvas = add_caption(canvas, caption, style="bubble")
+    return canvas
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
@@ -516,4 +688,8 @@ _DISPATCH: dict[str, Callable] = {
     "birthday":        _tmpl_birthday,
     "seasonal_sakura": _tmpl_seasonal_sakura,
     "cool_badge":      _tmpl_cool_badge,
+    "group_badge":     _tmpl_group_badge,
+    "action_pop":      _tmpl_action_pop,
+    "bright_frame":    _tmpl_bright_frame,
+    "soft_pastel":     _tmpl_soft_pastel,
 }

@@ -166,6 +166,46 @@
                 {% endfor %}
               </select>
 
+              <!-- 警告 -->
+              {% if item['warning_list'] %}
+              <div class="mt-1">
+                {% for w in item['warning_list'] %}
+                <div class="text-warning-emphasis bg-warning-subtle rounded px-1 mb-1"
+                     style="font-size:.7rem"><i class="bi bi-exclamation-triangle me-1"></i>{{ w }}</div>
+                {% endfor %}
+              </div>
+              {% endif %}
+
+              <!-- 手動調整パネル -->
+              <a class="d-block text-center small text-muted mt-1" data-bs-toggle="collapse"
+                 href="#adjust-{{ item['position'] }}" role="button" style="font-size:.72rem">
+                <i class="bi bi-sliders me-1"></i>手動調整
+              </a>
+              <div class="collapse mt-1" id="adjust-{{ item['position'] }}">
+                <div class="border rounded p-2" style="font-size:.7rem">
+                  <label class="d-block mb-1">ズーム
+                    <input type="range" class="form-range" min="0.5" max="2.5" step="0.05"
+                           name="zoom_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['zoom'] if item['zoom'] is not none else 1.0) }}">
+                  </label>
+                  <label class="d-block mb-1">左右位置
+                    <input type="range" class="form-range" min="-0.5" max="0.5" step="0.02"
+                           name="offset_x_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['offset_x'] if item['offset_x'] is not none else 0.0) }}">
+                  </label>
+                  <label class="d-block mb-1">上下位置
+                    <input type="range" class="form-range" min="-0.5" max="0.5" step="0.02"
+                           name="offset_y_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['offset_y'] if item['offset_y'] is not none else 0.0) }}">
+                  </label>
+                  <label class="d-block mb-0">明るさ
+                    <input type="range" class="form-range" min="-1" max="1" step="0.05"
+                           name="brightness_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['brightness'] if item['brightness'] is not none else 0.0) }}">
+                  </label>
+                </div>
+              </div>
+
               {% if item['error_message'] %}
               <div class="text-danger mt-1" style="font-size:.72rem" title="{{ item['error_message'] }}">
                 <i class="bi bi-exclamation-circle me-1"></i>
@@ -188,7 +228,7 @@
         <button type="submit" class="btn btn-outline-primary">
           <i class="bi bi-save me-1"></i>編集内容を保存
         </button>
-        <span class="text-muted small ms-2">セリフ・テンプレート・文字スタイルの変更を保存します</span>
+        <span class="text-muted small ms-2">セリフ・テンプレート・調整（ズーム/位置/明るさ）を保存します。保存後に再生成で反映されます</span>
       </div>
     </div>
   </div>

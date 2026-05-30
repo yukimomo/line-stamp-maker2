@@ -14,7 +14,8 @@ from typing import Optional
 
 from PIL import Image, ImageDraw
 
-from .character_processor import CharacterProcessor
+from .character_processor import CharacterProcessor, Adjustments
+from .quality_check import analyze_quality
 from .text_styles import TEXT_STYLES, load_font, auto_font_size, _draw_outlined_text
 
 # LINE Creators Market spec
@@ -42,6 +43,11 @@ class StampItemSpec:
     style: str = "simple_circle"   # template name
     text_style: str = "bubble"
     expression: str = "none"       # reserved
+    # Manual adjustments
+    zoom: float = 1.0
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    brightness: float = 0.0
 
 
 @dataclass
@@ -52,6 +58,7 @@ class GenerationResult:
     preview_path: Optional[str] = None
     error: Optional[str] = None
     error_stage: Optional[str] = None
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -127,11 +134,20 @@ def _process_one(
         photo = _load_image(Path(item.photo_path))
 
         stage = "resize"
-        photo.thumbnail((_CONTENT_MAX_W, _CONTENT_MAX_H), Image.Resampling.LANCZOS)
+        # Keep enough resolution for face detection; downscale very large photos
+        big = photo.copy()
+        big.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
 
         stage = "character"
+        adj = Adjustments(
+            zoom=item.zoom, offset_x=item.offset_x,
+            offset_y=item.offset_y, brightness=item.brightness,
+        )
         processor = CharacterProcessor(style=item.style, expression=item.expression)
-        steps = processor.process(photo, item.caption, item.text_style)
+        steps = processor.process(big, item.caption, item.text_style, adjustments=adj)
+
+        stage = "quality"
+        warnings = analyze_quality(big, steps.face_info, item.caption, item.text_style)
 
         stage = "save_preview"
         preview_path = previews_dir / f"preview_{item.position:02d}.jpg"
@@ -148,6 +164,7 @@ def _process_one(
             success=True,
             sticker_path=str(sticker_path),
             preview_path=str(preview_path),
+            warnings=warnings,
         )
     except Exception as exc:
         return GenerationResult(

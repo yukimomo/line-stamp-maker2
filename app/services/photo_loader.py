@@ -21,8 +21,17 @@ def load_adopted_photos(
     manifest_path = Path(manifest_path)
     selected_dir = Path(selected_dir)
 
-    if manifest_path.exists():
-        return _from_manifest(manifest_path)
+    # Try the configured path, then common sibling locations
+    candidates = [
+        manifest_path,
+        manifest_path.parent.parent / "manifest.photos.json",  # output/manifest.photos.json
+        Path(selected_dir).parent / "manifest.photos.json",
+        Path(selected_dir).parent / "scores" / "manifest.photos.json",
+    ]
+    for cand in candidates:
+        if cand.exists():
+            return _from_manifest(cand)
+
     if selected_dir.exists():
         return _from_directory(selected_dir)
     return []
@@ -47,6 +56,8 @@ def _from_manifest(manifest_path: Path) -> list[dict[str, Any]]:
                 "score": float(score),
                 "caption": analysis.get("caption", ""),
                 "tags": analysis.get("tags", []),
+                # full analysis (incl. risks) for template auto-selection
+                "analysis": analysis,
             }
         )
 
