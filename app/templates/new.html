@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}新規スタンプセット作成{% endblock %}
+{% block content %}
+
+<div class="mb-4">
+  <a href="{{ url_for('stamps.index') }}" class="text-muted text-decoration-none">
+    <i class="bi bi-arrow-left me-1"></i>一覧に戻る
+  </a>
+  <h2 class="fw-bold mt-1"><i class="bi bi-plus-circle text-success me-2"></i>新規スタンプセット作成</h2>
+</div>
+
+{% if error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('stamps.create_set') }}" id="stamp-form">
+
+  <!-- Set name / description -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3">セット情報</h5>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">セット名 <span class="text-danger">*</span></label>
+        <input type="text" class="form-control" name="name" required placeholder="例: 夏の思い出スタンプ">
+      </div>
+      <div>
+        <label class="form-label fw-semibold">説明（任意）</label>
+        <input type="text" class="form-control" name="description" placeholder="例: 2026年夏の家族写真を使ったスタンプ">
+      </div>
+    </div>
+  </div>
+
+  <!-- Caption templates (shared) -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-2">セリフテンプレート</h5>
+      <p class="text-muted small mb-2">セリフ欄をクリック後、ボタンを押すと入力できます</p>
+      <div class="d-flex flex-wrap gap-2">
+        {% for t in caption_templates %}
+        <button type="button" class="btn btn-outline-secondary btn-sm tmpl-btn" data-text="{{ t }}">{{ t }}</button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- 8 slots -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3">写真とセリフ（8枚を選択）</h5>
+      <div class="row row-cols-2 row-cols-sm-4 g-3" id="slots">
+        {% for i in range(1, 9) %}
+        <div class="col">
+          <div class="text-center">
+            <div class="text-muted small fw-semibold mb-1">{{ i }}</div>
+            <!-- Photo pick area -->
+            <div class="slot-pick-area mb-2" id="pick-{{ i }}" onclick="openModal({{ i }})" title="クリックして写真を選択">
+              <img id="thumb-{{ i }}" src="" alt="" class="stamp-thumb" style="display:none">
+              <span id="placeholder-{{ i }}" class="text-muted">
+                <i class="bi bi-image fs-3"></i><br>
+                <small>タップして選択</small>
+              </span>
+            </div>
+            <input type="hidden" name="photo_{{ i }}" id="photo-{{ i }}">
+            <!-- Caption input -->
+            <input type="text" class="form-control form-control-sm caption-input"
+                   name="caption_{{ i }}" id="caption-{{ i }}"
+                   placeholder="セリフ" data-slot="{{ i }}"
+                   value="{{ caption_templates[i - 1] if i <= caption_templates|length else '' }}">
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-success btn-lg px-4">
+      <i class="bi bi-save me-1"></i>保存してプレビューへ
+    </button>
+    <a href="{{ url_for('stamps.index') }}" class="btn btn-outline-secondary btn-lg">キャンセル</a>
+  </div>
+
+</form>
+
+<!-- Photo selection modal -->
+<div class="modal fade" id="photo-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">写真を選択（スロット <span id="modal-slot-num">1</span>）</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="form-control mb-3" id="photo-search"
+               placeholder="ファイル名やキャプションで絞り込み…">
+        <div id="photo-loading" class="text-center py-4 text-muted">
+          <div class="spinner-border spinner-border-sm me-2"></div>読み込み中…
+        </div>
+        <div id="photo-empty" class="text-center py-4 text-muted d-none">
+          <i class="bi bi-folder2-open fs-2"></i>
+          <p class="mt-2">採用済み写真が見つかりません。<br>photo-selector で写真を選別してください。</p>
+        </div>
+        <div id="photo-grid" class="d-flex flex-wrap gap-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  let currentSlot = null;
+  let allPhotos = [];
+  let focusedSlot = null;
+
+  // --- caption template buttons ---
+  document.querySelectorAll('.tmpl-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (focusedSlot) {
+        document.getElementById(`caption-${focusedSlot}`).value = btn.dataset.text;
+      }
+    });
+  });
+
+  document.querySelectorAll('.caption-input').forEach(inp => {
+    inp.addEventListener('focus', () => { focusedSlot = inp.dataset.slot; });
+  });
+
+  // --- photo modal ---
+  const modal = new bootstrap.Modal(document.getElementById('photo-modal'));
+
+  function openModal(slot) {
+    currentSlot = slot;
+    document.getElementById('modal-slot-num').textContent = slot;
+    document.getElementById('photo-search').value = '';
+    modal.show();
+    if (allPhotos.length === 0) fetchPhotos();
+    else renderGrid(allPhotos);
+  }
+
+  function fetchPhotos() {
+    document.getElementById('photo-loading').classList.remove('d-none');
+    document.getElementById('photo-grid').innerHTML = '';
+    document.getElementById('photo-empty').classList.add('d-none');
+
+    fetch('/api/photos')
+      .then(r => r.json())
+      .then(data => {
+        allPhotos = data;
+        document.getElementById('photo-loading').classList.add('d-none');
+        if (data.length === 0) {
+          document.getElementById('photo-empty').classList.remove('d-none');
+        } else {
+          renderGrid(data);
+        }
+      })
+      .catch(() => {
+        document.getElementById('photo-loading').classList.add('d-none');
+        document.getElementById('photo-empty').classList.remove('d-none');
+      });
+  }
+
+  function renderGrid(photos) {
+    const grid = document.getElementById('photo-grid');
+    grid.innerHTML = '';
+    photos.forEach(photo => {
+      const img = document.createElement('img');
+      img.src = '/photo?path=' + encodeURIComponent(photo.path);
+      img.className = 'photo-grid-item';
+      img.title = (photo.caption || '') + (photo.tags && photo.tags.length ? '\n' + photo.tags.join(', ') : '');
+      img.loading = 'lazy';
+      img.onerror = () => { img.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90"><rect fill="%23eee" width="90" height="90"/><text y="50" x="45" text-anchor="middle" fill="%23999" font-size="12">ERR</text></svg>'; };
+      img.addEventListener('click', () => selectPhoto(photo.path));
+      grid.appendChild(img);
+    });
+  }
+
+  function selectPhoto(photoPath) {
+    if (!currentSlot) return;
+
+    document.getElementById(`photo-${currentSlot}`).value = photoPath;
+
+    const thumb = document.getElementById(`thumb-${currentSlot}`);
+    const placeholder = document.getElementById(`placeholder-${currentSlot}`);
+    const pickArea = document.getElementById(`pick-${currentSlot}`);
+
+    thumb.src = '/photo?path=' + encodeURIComponent(photoPath);
+    thumb.style.display = 'block';
+    placeholder.style.display = 'none';
+    pickArea.classList.add('has-photo');
+
+    modal.hide();
+  }
+
+  // --- search filter ---
+  document.getElementById('photo-search').addEventListener('input', function () {
+    const q = this.value.toLowerCase();
+    const filtered = q
+      ? allPhotos.filter(p =>
+          p.path.toLowerCase().includes(q) ||
+          (p.caption && p.caption.toLowerCase().includes(q)) ||
+          (p.tags && p.tags.some(t => t.toLowerCase().includes(q)))
+        )
+      : allPhotos;
+    renderGrid(filtered);
+  });
+</script>
+{% endblock %}

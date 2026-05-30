@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}{{ stamp_set['name'] }} - スタンプ詳細{% endblock %}
+{% block content %}
+
+<div class="mb-3">
+  <a href="{{ url_for('stamps.index') }}" class="text-muted text-decoration-none">
+    <i class="bi bi-arrow-left me-1"></i>一覧に戻る
+  </a>
+</div>
+
+<!-- Header -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="flex-grow-1">
+        <h2 class="fw-bold mb-1">{{ stamp_set['name'] }}</h2>
+        <p class="text-muted mb-0">{{ stamp_set['description'] or '（説明なし）' }}</p>
+        <small class="text-muted"><i class="bi bi-clock me-1"></i>{{ stamp_set['created_at'] }}</small>
+      </div>
+      <span class="badge fs-6
+        {% if stamp_set['status'] == 'generated' %}bg-success
+        {% elif stamp_set['status'] == 'partial' %}bg-warning text-dark
+        {% elif stamp_set['status'] == 'error' %}bg-danger
+        {% elif stamp_set['status'] == 'generating' %}bg-info text-dark
+        {% else %}bg-secondary{% endif %}">
+        {{ {'draft':'下書き','generated':'生成済み','partial':'一部生成',
+            'error':'エラー','generating':'生成中'}.get(stamp_set['status'], stamp_set['status']) }}
+      </span>
+    </div>
+  </div>
+</div>
+
+<!-- Validation report -->
+{% if validation %}
+  {% if validation.is_valid %}
+  <div class="alert alert-success">
+    <i class="bi bi-check-circle-fill me-2"></i>LINE 申請仕様チェック: 問題なし
+  </div>
+  {% else %}
+  <div class="alert alert-danger">
+    <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>仕様チェックでエラーがあります</strong>
+    <ul class="mb-0 mt-2">
+      {% for e in validation.errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% if validation.warnings %}
+  <div class="alert alert-warning">
+    <i class="bi bi-exclamation-circle me-2"></i>警告:
+    {% for w in validation.warnings %}<br>・{{ w }}{% endfor %}
+  </div>
+  {% endif %}
+{% endif %}
+
+<!-- Stamp preview grid -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-grid me-2"></i>スタンプ一覧（8枚）</h5>
+    <div class="row row-cols-2 row-cols-sm-4 g-3">
+      {% for item in items %}
+      <div class="col">
+        <div class="card h-100 border {% if item['error_message'] %}border-danger{% elif item['sticker_path'] %}border-success{% else %}border-secondary{% endif %} text-center">
+          <div class="card-body p-2">
+            <div class="text-muted small fw-semibold mb-1">{{ item['position'] }}</div>
+
+            {% if item['sticker_path'] %}
+              <img src="{{ item['sticker_path'] | photourl }}"
+                   class="stamp-thumb mb-1"
+                   alt="スタンプ {{ item['position'] }}">
+            {% else %}
+              <div class="stamp-thumb mb-1 d-flex align-items-center justify-content-center bg-light text-muted" style="height:120px">
+                {% if item['error_message'] %}
+                  <i class="bi bi-x-circle fs-2 text-danger"></i>
+                {% else %}
+                  <img src="{{ item['photo_path'] | photourl }}"
+                       style="max-width:100%;max-height:100%;object-fit:contain">
+                {% endif %}
+              </div>
+            {% endif %}
+
+            <div class="small fw-semibold text-truncate" title="{{ item['caption'] }}">
+              {{ item['caption'] or '（セリフなし）' }}
+            </div>
+
+            {% if item['error_message'] %}
+            <div class="text-danger mt-1" style="font-size:.75rem" title="{{ item['error_message'] }}">
+              <i class="bi bi-exclamation-circle me-1"></i>{{ item['error_message'][:60] }}{% if item['error_message']|length > 60 %}…{% endif %}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Actions -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-gear me-2"></i>操作</h5>
+    <div class="d-flex flex-wrap gap-3 align-items-center">
+
+      <!-- Generate -->
+      <form method="post" action="{{ url_for('stamps.generate', set_id=stamp_set['id']) }}"
+            id="generate-form">
+        <button type="submit" id="generate-btn" class="btn btn-success btn-lg">
+          <i class="bi bi-magic me-1"></i>
+          {% if stamp_set['status'] in ('generated', 'partial') %}再生成{% else %}スタンプを生成{% endif %}
+        </button>
+      </form>
+
+      <!-- Download ZIP -->
+      {% if stamp_set['zip_path'] %}
+      <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}"
+         class="btn btn-primary btn-lg">
+        <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード
+      </a>
+      {% endif %}
+
+      <!-- Reset stuck status -->
+      {% if stamp_set['status'] in ('generating', 'error') %}
+      <form method="post" action="{{ url_for('stamps.reset_set', set_id=stamp_set['id']) }}">
+        <button class="btn btn-outline-warning">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>ステータスをリセット
+        </button>
+      </form>
+      {% endif %}
+
+      <!-- Delete -->
+      <form method="post" action="{{ url_for('stamps.delete_set', set_id=stamp_set['id']) }}" class="ms-auto"
+            onsubmit="return confirm('このセットを削除しますか？')">
+        <button class="btn btn-outline-danger">
+          <i class="bi bi-trash me-1"></i>削除
+        </button>
+      </form>
+    </div>
+
+    {% if stamp_set['status'] == 'generating' %}
+    <div class="alert alert-warning mt-3 mb-0">
+      <i class="bi bi-hourglass-split me-1"></i>
+      前回の生成が中断した可能性があります。「ステータスをリセット」を押してから再生成してください。
+    </div>
+    {% elif stamp_set['status'] in ('draft', 'partial') %}
+    <div class="alert alert-info mt-3 mb-0">
+      <i class="bi bi-info-circle me-1"></i>
+      生成には人物検出・セグメンテーション・文字入れ処理を行います。写真8枚で数分かかる場合があります。
+    </div>
+    {% elif stamp_set['status'] == 'error' %}
+    <div class="alert alert-danger mt-3 mb-0">
+      <i class="bi bi-exclamation-triangle me-1"></i>
+      生成に失敗しました。各スロットのエラー内容を確認し、「ステータスをリセット」→「再生成」を試してください。
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById('generate-form').addEventListener('submit', function () {
+    const btn = document.getElementById('generate-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成中…';
+    document.getElementById('loading-overlay').style.display = 'flex';
+  });
+</script>
+{% endblock %}
