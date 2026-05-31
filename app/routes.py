@@ -21,6 +21,9 @@ from .services.stamp_themes import THEMES, assign_captions_to_photos
 from .services.text_styles import TEXT_STYLES
 from .services.metadata import META_FIELDS, LINE_CATEGORIES, default_metadata, suggest_metadata
 from .services.review import run_review
+from .services.design_presets import (
+    BUILTIN_PRESETS, preset_overrides, preset_decorations, preset_main_bg,
+)
 from .db import ALLOWED_COUNTS
 import io
 import json
@@ -221,6 +224,7 @@ def detail(set_id: int):
         THEMES=THEMES,
         FONT_CHOICES=FONT_CHOICES,
         DECORATIONS=DECORATIONS,
+        BUILTIN_PRESETS=BUILTIN_PRESETS,
         caption_templates=CAPTION_TEMPLATES,
     )
 
@@ -352,9 +356,11 @@ def generate(set_id: int):
     )
     db.commit()
 
+    main_bg = preset_main_bg(stamp_set["preset_key"]) if stamp_set["preset_key"] else None
     try:
         summary = generate_stamp_set(
-            specs, output_dir, theme_name=theme, set_name=stamp_set["name"]
+            specs, output_dir, theme_name=theme, set_name=stamp_set["name"],
+            main_bg=main_bg,
         )
     except Exception as exc:
         err_msg = f"{type(exc).__name__}: {exc}"
@@ -625,7 +631,8 @@ def regenerate_one(set_id: int, position: int):
             (result.sticker_path, result.preview_path, warns,
              result.error if not result.success else None, item["id"]),
         )
-        zip_path = finalize_set(out, theme_name=theme, set_name=stamp_set["name"])
+        zip_path = finalize_set(out, theme_name=theme, set_name=stamp_set["name"],
+                                main_bg=preset_main_bg(stamp_set["preset_key"]) if stamp_set["preset_key"] else None)
         db.execute("UPDATE stamp_sets SET zip_path=? WHERE id=?", (zip_path, set_id))
 
     _touch(db, set_id)
@@ -771,6 +778,38 @@ def apply_preset(set_id: int):
     return redirect(url_for("stamps.detail", set_id=set_id))
 
 
+@bp.route("/stamps/<int:set_id>/apply_builtin_preset", methods=["POST"])
+def apply_builtin_preset(set_id: int):
+    """
+    Apply a built-in design preset to the whole set: per-item overrides +
+    decorations + base template, the set's text_style, and remember preset_key
+    so main.png / tab.png use the preset background.
+    """
+    db = get_db()
+    stamp_set = db.execute("SELECT id FROM stamp_sets WHERE id=?", (set_id,)).fetchone()
+    if stamp_set is None:
+        abort(404)
+    key = request.form.get("preset_key", "")
+    cfg = BUILTIN_PRESETS.get(key)
+    if cfg is None:
+        return redirect(url_for("stamps.detail", set_id=set_id))
+
+    overrides = preset_overrides(key)
+    decorations = preset_decorations(key)
+    ov_json = json.dumps(overrides, ensure_ascii=False)
+    deco_json = json.dumps(decorations, ensure_ascii=False) if decorations else None
+
+    db.execute(
+        "UPDATE stamp_items SET style_json=?, decoration_json=?, item_template=? WHERE set_id=?",
+        (ov_json, deco_json, cfg.base_template, set_id),
+    )
+    db.execute("UPDATE stamp_sets SET text_style=?, preset_key=? WHERE id=?",
+               (cfg.text_style, key, set_id))
+    _touch(db, set_id)
+    db.commit()
+    return redirect(url_for("stamps.detail", set_id=set_id))
+
+
 def _review_for_set(db, stamp_set, items):
     count = stamp_set["stamp_count"] or 8
     tags_idx = _photo_tags_index()
@@ -879,6 +918,7 @@ def package(set_id: int):
     zip_path = build_application_package(
         Path(stamp_set["output_dir"]), meta, count, checklist,
         theme_name=stamp_set["theme"] or "simple_icon", set_name=stamp_set["name"],
+        main_bg=preset_main_bg(stamp_set["preset_key"]) if stamp_set["preset_key"] else None,
     )
     status = "exported" if (zip_path and not report.errors) else report.submit_status(bool(zip_path))
     db.execute("UPDATE stamp_sets SET zip_path=?, submit_status=? WHERE id=?",

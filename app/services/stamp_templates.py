@@ -105,7 +105,7 @@ def apply_template(
     The SAME function is used by both live preview and final generation, so
     customized output always matches the preview.
     """
-    global _FRAME_OVERRIDE
+    global _FRAME_OVERRIDE, _BG_OVERRIDE
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
@@ -118,6 +118,12 @@ def apply_template(
     )
 
     _FRAME_OVERRIDE = overrides or None
+    # Background-color override (consumed by _canvas)
+    if overrides and overrides.get("bg_color") is not None:
+        _BG_OVERRIDE = {"color": overrides["bg_color"],
+                        "gradient": bool(overrides.get("bg_gradient"))}
+    else:
+        _BG_OVERRIDE = None
     try:
         # If text is customized, render the template WITHOUT its built-in caption
         # and draw the caption centrally so overrides apply on every template.
@@ -125,6 +131,7 @@ def apply_template(
         result = fn(circle_img, tmpl_caption, text_style)
     finally:
         _FRAME_OVERRIDE = None
+        _BG_OVERRIDE = None
 
     # Decorations layer (on top of frame/background, below/over text as added)
     if decorations:
@@ -207,7 +214,20 @@ def auto_select_template(
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+# Background-color override for the current render (set by apply_template).
+_BG_OVERRIDE: dict | None = None
+
+
 def _canvas() -> Image.Image:
+    """Fresh canvas. Honors _BG_OVERRIDE (preset background color/gradient)."""
+    ov = _BG_OVERRIDE
+    if ov and ov.get("color") is not None:
+        rgb = tuple(int(x) for x in ov["color"])[:3]
+        if ov.get("gradient"):
+            top = (*rgb, 255)
+            bot = tuple(max(0, c - 40) for c in rgb) + (255,)
+            return _gradient_v((CANVAS_W, CANVAS_H), top, bot)
+        return Image.new("RGBA", (CANVAS_W, CANVAS_H), (*rgb, 255))
     return Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
 
 

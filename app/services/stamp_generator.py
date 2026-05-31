@@ -88,6 +88,7 @@ def generate_stamp_set(
     output_dir: Path,
     theme_name: str = "simple_icon",
     set_name: str = "",
+    main_bg: tuple | None = None,
 ) -> GenerationSummary:
     """
     Generate a complete LINE stamp set (8 stickers + main + tab + ZIP).
@@ -97,6 +98,7 @@ def generate_stamp_set(
         output_dir: Output directory.
         theme_name: Theme key from stamp_themes.THEMES (used for main/tab).
         set_name:   Displayed on main.png.
+        main_bg:    Optional RGBA override for main/tab background (preset color).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "stickers").mkdir(exist_ok=True)
@@ -110,7 +112,8 @@ def generate_stamp_set(
     successful_stickers = [
         Path(r.sticker_path) for r in results if r.success and r.sticker_path
     ]
-    _generate_themed_main_tab(successful_stickers, theme_name, set_name, output_dir)
+    _generate_themed_main_tab(successful_stickers, theme_name, set_name, output_dir,
+                              bg_override=main_bg)
 
     zip_path: Optional[Path] = None
     if successful_stickers:
@@ -139,6 +142,7 @@ def finalize_set(
     output_dir: Path,
     theme_name: str = "simple_icon",
     set_name: str = "",
+    main_bg: tuple | None = None,
 ) -> Optional[str]:
     """
     Rebuild main.png / tab.png and upload.zip from whatever stickers currently
@@ -148,7 +152,8 @@ def finalize_set(
     sticker_paths = sorted(stickers_dir.glob("stamp_*.png")) if stickers_dir.exists() else []
     if not sticker_paths:
         return None
-    _generate_themed_main_tab(sticker_paths, theme_name, set_name, output_dir)
+    _generate_themed_main_tab(sticker_paths, theme_name, set_name, output_dir,
+                              bg_override=main_bg)
     results = [GenerationResult(position=i + 1, success=True, sticker_path=str(p))
                for i, p in enumerate(sticker_paths)]
     return str(_build_zip(output_dir, stickers_dir, results))
@@ -247,20 +252,24 @@ def _generate_themed_main_tab(
     theme_name: str,
     set_name: str,
     output_dir: Path,
+    bg_override: tuple | None = None,
 ) -> None:
     """
-    main.png (240×240): theme-colored background + up to 3 sticker thumbnails + set name.
+    main.png (240×240): preset/theme-colored background + up to 3 thumbnails + set name.
     tab.png  (96×74):   first sticker as a clean circular icon, no text.
     """
     if not sticker_paths:
         return
 
-    try:
-        from .stamp_themes import THEMES
-        cfg = THEMES.get(theme_name)
-        bg_color = cfg.main_bg if cfg else (60, 60, 90, 255)
-    except Exception:
-        bg_color = (60, 60, 90, 255)
+    if bg_override is not None:
+        bg_color = tuple(bg_override)
+    else:
+        try:
+            from .stamp_themes import THEMES
+            cfg = THEMES.get(theme_name)
+            bg_color = cfg.main_bg if cfg else (60, 60, 90, 255)
+        except Exception:
+            bg_color = (60, 60, 90, 255)
 
     # ── main.png ────────────────────────────────────────────────────────────
     main = Image.new("RGBA", (MAIN_W, MAIN_H), bg_color)
@@ -389,6 +398,7 @@ def build_application_package(
     checklist_lines: list[str],
     theme_name: str = "simple_icon",
     set_name: str = "",
+    main_bg: tuple | None = None,
 ) -> str | None:
     """
     Write application files and rebuild upload.zip including them.
@@ -402,7 +412,8 @@ def build_application_package(
 
     # Ensure main/tab exist
     if not (output_dir / "main.png").exists() or not (output_dir / "tab.png").exists():
-        _generate_themed_main_tab(sticker_paths, theme_name, set_name, output_dir)
+        _generate_themed_main_tab(sticker_paths, theme_name, set_name, output_dir,
+                                  bg_override=main_bg)
 
     extra = write_application_files(output_dir, meta, count, checklist_lines)
     results = [GenerationResult(position=i + 1, success=True, sticker_path=str(p))
