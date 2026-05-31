@@ -122,27 +122,30 @@ _TAG_CAPTION_AFFINITY: list[tuple[set[str], list[str]]] = [
 def assign_captions_to_photos(
     photos: list[dict],
     theme_name: str,
+    count: int = 8,
 ) -> list[str]:
     """
-    Return a list of 8 captions for the given photos, using theme defaults
-    but trying to match captions to photo analysis tags where available.
+    Return *count* captions for the given photos, using theme defaults but
+    matching captions to photo analysis tags where available.
 
-    If fewer than 8 photos are provided, cycles through theme captions.
+    Photos shorter than *count* are cycled. Captions repeat (with a numeric
+    suffix once exhausted) so each slot still gets a distinct label.
     """
     cfg = THEMES.get(theme_name, THEMES["simple_icon"])
-    pool = list(cfg.captions)       # mutable copy
-    used: set[str] = set()
+    base = cfg.captions
     result: list[str] = []
+    used: set[str] = set()
 
-    for i, photo in enumerate(photos[:8]):
+    for i in range(count):
+        photo = photos[i % len(photos)] if photos else {}
         tags = _extract_tags(photo)
+        pool = [c for c in base if c not in used] or list(base)
         cap = _pick_caption(tags, pool, used) or pool[i % len(pool)]
+        if cap in used:
+            # captions exhausted for this round — disambiguate
+            cap = f"{cap}{(i // len(base)) + 1}"
         result.append(cap)
         used.add(cap)
-
-    # Pad to 8 if needed
-    while len(result) < 8:
-        result.append(cfg.captions[len(result) % len(cfg.captions)])
 
     return result
 

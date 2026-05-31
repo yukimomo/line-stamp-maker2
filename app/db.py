@@ -18,14 +18,16 @@ CREATE TABLE IF NOT EXISTS stamp_sets (
     style       TEXT    NOT NULL DEFAULT 'simple_circle',
     text_style  TEXT    NOT NULL DEFAULT 'bubble',
     expression  TEXT    NOT NULL DEFAULT 'none',
+    stamp_count INTEGER NOT NULL DEFAULT 8,
     output_dir  TEXT,
     zip_path    TEXT
 );
 
+-- Note: position is NOT range-checked (LINE allows 8/16/24/32/40 stamps).
 CREATE TABLE IF NOT EXISTS stamp_items (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     set_id        INTEGER NOT NULL REFERENCES stamp_sets(id) ON DELETE CASCADE,
-    position      INTEGER NOT NULL CHECK(position BETWEEN 1 AND 8),
+    position      INTEGER NOT NULL,
     photo_path    TEXT    NOT NULL,
     caption       TEXT    NOT NULL DEFAULT '',
     item_template TEXT,
@@ -40,6 +42,9 @@ CREATE TABLE IF NOT EXISTS stamp_items (
     UNIQUE(set_id, position)
 );
 """
+
+# Allowed LINE static-sticker set sizes
+ALLOWED_COUNTS = (8, 16, 24, 32, 40)
 
 # NOTE: SQLite forbids ALTER TABLE ADD COLUMN with a non-constant default
 # (e.g. datetime('now')). updated_at is therefore added as a plain nullable
@@ -57,6 +62,7 @@ _MIGRATIONS = [
     "ALTER TABLE stamp_items ADD COLUMN offset_y   REAL NOT NULL DEFAULT 0.0",
     "ALTER TABLE stamp_items ADD COLUMN brightness REAL NOT NULL DEFAULT 0.0",
     "ALTER TABLE stamp_items ADD COLUMN warnings   TEXT",
+    "ALTER TABLE stamp_sets  ADD COLUMN stamp_count INTEGER NOT NULL DEFAULT 8",
 ]
 
 # Run after _MIGRATIONS to back-fill nullable columns
@@ -97,6 +103,55 @@ def init_db(app: Flask) -> None:
                 db.execute(sql)
             except sqlite3.OperationalError:
                 pass
+        _drop_position_check(db)
         db.commit()
         db.close()
     app.teardown_appcontext(close_db)
+
+
+def _drop_position_check(db: sqlite3.Connection) -> None:
+    """
+    Older DBs created stamp_items with CHECK(position BETWEEN 1 AND 8), which
+    blocks 16/24/32/40-stamp sets. Rebuild the table without that constraint.
+    """
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='stamp_items'"
+    ).fetchone()
+    if not row or "BETWEEN 1 AND 8" not in (row[0] or ""):
+        return  # already constraint-free
+
+    db.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        BEGIN;
+        ALTER TABLE stamp_items RENAME TO _stamp_items_old;
+        CREATE TABLE stamp_items (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id        INTEGER NOT NULL REFERENCES stamp_sets(id) ON DELETE CASCADE,
+            position      INTEGER NOT NULL,
+            photo_path    TEXT    NOT NULL,
+            caption       TEXT    NOT NULL DEFAULT '',
+            item_template TEXT,
+            zoom          REAL    NOT NULL DEFAULT 1.0,
+            offset_x      REAL    NOT NULL DEFAULT 0.0,
+            offset_y      REAL    NOT NULL DEFAULT 0.0,
+            brightness    REAL    NOT NULL DEFAULT 0.0,
+            sticker_path  TEXT,
+            preview_path  TEXT,
+            warnings      TEXT,
+            error_message TEXT,
+            UNIQUE(set_id, position)
+        );
+        INSERT INTO stamp_items
+            (id, set_id, position, photo_path, caption, item_template, zoom,
+             offset_x, offset_y, brightness, sticker_path, preview_path,
+             warnings, error_message)
+        SELECT id, set_id, position, photo_path, caption, item_template, zoom,
+               offset_x, offset_y, brightness, sticker_path, preview_path,
+               warnings, error_message
+        FROM _stamp_items_old;
+        DROP TABLE _stamp_items_old;
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+        """
+    )

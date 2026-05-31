@@ -76,8 +76,17 @@ class TestCreateSetWithTheme:
         r = client.post("/stamps", data=data)
         assert r.status_code == 400
 
-    def test_fewer_than_8_photos_returns_400(self, client, app_with_photos):
-        r = _create_set(client, app_with_photos._photo_paths[:5])
+    def test_fewer_photos_cycle_to_fill(self, client, app_with_photos):
+        # Fewer photos than count is now allowed — they cycle to fill 8 slots
+        r = _create_set(client, app_with_photos._photo_paths[:3])
+        assert r.status_code == 302
+        with app_with_photos.app_context():
+            from app.db import get_db
+            n = get_db().execute("SELECT COUNT(*) c FROM stamp_items").fetchone()["c"]
+            assert n == 8
+
+    def test_zero_photos_returns_400(self, client, app_with_photos):
+        r = _create_set(client, [])
         assert r.status_code == 400
 
     def test_invalid_theme_falls_back(self, client, app_with_photos):

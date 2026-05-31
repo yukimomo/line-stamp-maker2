@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}{{ stamp_set['name'] }} - エクスポート確認{% endblock %}
+{% block content %}
+
+<div class="mb-3">
+  <a href="{{ url_for('stamps.detail', set_id=stamp_set['id']) }}" class="text-muted text-decoration-none">
+    <i class="bi bi-arrow-left me-1"></i>編集に戻る
+  </a>
+</div>
+
+<h2 class="fw-bold mb-4"><i class="bi bi-box-arrow-up text-success me-2"></i>エクスポート確認</h2>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="row text-center g-3">
+      <div class="col-6 col-md-3">
+        <div class="fs-2 fw-bold">{{ items|length }}</div>
+        <div class="text-muted small">スタンプ数</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="fs-2 fw-bold">{{ stamp_set['stamp_count'] }}</div>
+        <div class="text-muted small">申請枚数</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="fs-2">{{ '✓' if report and report.is_valid else '⚠' }}</div>
+        <div class="text-muted small">規格チェック</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="fs-2">{{ report.warnings|length if report else 0 }}</div>
+        <div class="text-muted small">警告</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- チェック結果 -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-clipboard-check me-2"></i>チェック結果</h5>
+    {% if report %}
+      {% if report.errors %}
+      <div class="alert alert-danger">
+        <strong><i class="bi bi-x-circle me-1"></i>エラー（申請不可）</strong>
+        <ul class="mb-0 mt-2">{% for e in report.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+      </div>
+      {% else %}
+      <div class="alert alert-success mb-3">
+        <i class="bi bi-check-circle-fill me-1"></i>
+        サイズ・PNG形式・main.png・tab.png・枚数すべて OK
+      </div>
+      {% endif %}
+
+      {% if report.warnings %}
+      <div class="alert alert-warning mb-0">
+        <strong><i class="bi bi-exclamation-triangle me-1"></i>警告（申請は可能ですが確認推奨）</strong>
+        <ul class="mb-0 mt-2">{% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+      </div>
+      {% else %}
+      <div class="text-success"><i class="bi bi-check2 me-1"></i>警告なし</div>
+      {% endif %}
+    {% else %}
+      <div class="alert alert-secondary mb-0">まだ生成されていません。先にスタンプを生成してください。</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ダウンロード -->
+<div class="d-flex gap-2">
+  {% if stamp_set['zip_path'] and report and report.is_valid %}
+  <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-success btn-lg">
+    <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード
+  </a>
+  {% elif stamp_set['zip_path'] %}
+  <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-outline-warning btn-lg"
+     onclick="return confirm('規格エラーがあります。それでもダウンロードしますか？')">
+    <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード（警告あり）
+  </a>
+  {% endif %}
+  <a href="{{ url_for('stamps.detail', set_id=stamp_set['id']) }}" class="btn btn-outline-secondary btn-lg">編集に戻る</a>
+</div>
+
+{% endblock %}

@@ -121,6 +121,54 @@ def generate_stamp_set(
 
 
 # ---------------------------------------------------------------------------
+# Single-item regenerate + finalize (for editing individual stamps)
+# ---------------------------------------------------------------------------
+
+def regenerate_item(item: StampItemSpec, output_dir: Path) -> GenerationResult:
+    """Regenerate one stamp (sticker + preview) in an existing set output dir."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "stickers").mkdir(exist_ok=True)
+    (output_dir / "previews").mkdir(exist_ok=True)
+    return _process_one(item, output_dir / "stickers", output_dir / "previews")
+
+
+def finalize_set(
+    output_dir: Path,
+    theme_name: str = "simple_icon",
+    set_name: str = "",
+) -> Optional[str]:
+    """
+    Rebuild main.png / tab.png and upload.zip from whatever stickers currently
+    exist in output_dir. Call after single-item regeneration. Returns zip path.
+    """
+    stickers_dir = output_dir / "stickers"
+    sticker_paths = sorted(stickers_dir.glob("stamp_*.png")) if stickers_dir.exists() else []
+    if not sticker_paths:
+        return None
+    _generate_themed_main_tab(sticker_paths, theme_name, set_name, output_dir)
+    results = [GenerationResult(position=i + 1, success=True, sticker_path=str(p))
+               for i, p in enumerate(sticker_paths)]
+    return str(_build_zip(output_dir, stickers_dir, results))
+
+
+def render_preview(item: StampItemSpec) -> Image.Image:
+    """
+    Render a single stamp in-memory (no disk write) for live preview.
+    Returns an RGBA image fitted to the sticker spec.
+    """
+    photo = _load_image(Path(item.photo_path))
+    big = photo.copy()
+    big.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+    adj = Adjustments(zoom=item.zoom, offset_x=item.offset_x,
+                      offset_y=item.offset_y, brightness=item.brightness)
+    processor = CharacterProcessor(style=item.style, expression=item.expression)
+    steps = processor.process(big, item.caption, item.text_style, adjustments=adj)
+    stamp = steps.stamp.copy()
+    stamp.thumbnail((STICKER_MAX_W, STICKER_MAX_H), Image.Resampling.LANCZOS)
+    return stamp
+
+
+# ---------------------------------------------------------------------------
 # Per-item processing
 # ---------------------------------------------------------------------------
 

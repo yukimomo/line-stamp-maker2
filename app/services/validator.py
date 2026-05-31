@@ -38,17 +38,26 @@ class ValidationReport:
         return [i.message for i in self.issues if i.level == "warning"]
 
 
+ALLOWED_COUNTS = (8, 16, 24, 32, 40)
+
+
 def validate_stamp_set(
     output_dir: Path,
     items: list[dict] | None = None,
+    required_count: int = REQUIRED_COUNT,
 ) -> ValidationReport:
     """
     Validate a generated stamp set.
 
+    Args:
+        output_dir:     directory containing stickers/, main.png, tab.png
+        items:          optional item dicts for content checks
+        required_count: expected sticker count (8/16/24/32/40)
+
     Checks:
       Image quality: PNG format, dimensions, file size, transparency, count
       Meta images:   main.png and tab.png existence and size
-      Content:       duplicate captions, duplicate photos (when items provided)
+      Content:       duplicate captions/photos, similar-design overuse
     """
     from PIL import Image
 
@@ -57,10 +66,15 @@ def validate_stamp_set(
 
     # ── stamp count ──────────────────────────────────────────────────────────
     sticker_files = sorted(stickers_dir.glob("stamp_*.png")) if stickers_dir.exists() else []
-    if len(sticker_files) < REQUIRED_COUNT:
+    if len(sticker_files) < required_count:
         report.issues.append(ValidationIssue(
             "error",
-            f"スタンプが {len(sticker_files)} 個です（{REQUIRED_COUNT} 個必要）",
+            f"スタンプが {len(sticker_files)} 個です（{required_count} 個必要）",
+        ))
+    if required_count not in ALLOWED_COUNTS:
+        report.issues.append(ValidationIssue(
+            "error",
+            f"申請枚数 {required_count} は不正です（8/16/24/32/40 のいずれか）",
         ))
 
     # ── per-sticker checks ───────────────────────────────────────────────────
@@ -126,6 +140,17 @@ def _check_content(items: list[dict], report: ValidationReport) -> None:
             "warning",
             f"セリフが空のスロットが {empty} 個あります",
         ))
+
+    # Similar-design overuse: one template used for >70% of a large set
+    templates = [str(i.get("item_template") or "") for i in items if i.get("item_template")]
+    if len(templates) >= 8:
+        from collections import Counter
+        tmpl, n = Counter(templates).most_common(1)[0]
+        if n / len(templates) > 0.7:
+            report.issues.append(ValidationIssue(
+                "warning",
+                f"同じテンプレートが {n} 枚で偏っています（デザインに変化を付けると良いです）",
+            ))
 
 
 def _check_png(
