@@ -253,6 +253,88 @@
                 </div>
               </div>
 
+              <!-- デザイン詳細編集パネル -->
+              {% set ov = item['overrides'] %}
+              <a class="d-block text-center small text-primary mt-1" data-bs-toggle="collapse"
+                 href="#design-{{ item['position'] }}" role="button" style="font-size:.72rem">
+                <i class="bi bi-brush me-1"></i>デザイン詳細編集
+              </a>
+              <div class="collapse mt-1 design-panel" id="design-{{ item['position'] }}"
+                   data-position="{{ item['position'] }}">
+                <div class="border rounded p-2" style="font-size:.7rem">
+                  <div class="fw-bold text-muted mb-1">文字</div>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">文字色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="text_color"
+                             value="{{ ov.get('text_color') | rgbhex('#ffffff') }}"></div>
+                    <div class="col-6">縁色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="stroke_color"
+                             value="{{ ov.get('stroke_color') | rgbhex('#000000') }}"></div>
+                  </div>
+                  <label class="d-block mb-1">縁取り太さ
+                    <input type="range" class="form-range dz" data-k="stroke_width" min="0" max="12" step="1"
+                           value="{{ ov.get('stroke_width', 6) }}"></label>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">フォント
+                      <select class="form-select form-select-sm dz" data-k="font">
+                        {% for fk, fl in FONT_CHOICES.items() %}
+                        <option value="{{ fk }}" {% if ov.get('font')==fk %}selected{% endif %}>{{ fl }}</option>
+                        {% endfor %}
+                      </select></div>
+                    <div class="col-6">文字サイズ
+                      <input type="number" class="form-control form-control-sm dz" data-k="font_size"
+                             min="0" max="80" value="{{ ov.get('font_size', 0) }}" placeholder="自動"></div>
+                  </div>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">位置
+                      <select class="form-select form-select-sm dz" data-k="text_pos">
+                        {% for pk,pl in {'top':'上','center':'中央','bottom':'下'}.items() %}
+                        <option value="{{ pk }}" {% if ov.get('text_pos',('bottom'))==pk %}selected{% endif %}>{{ pl }}</option>
+                        {% endfor %}
+                      </select></div>
+                    <div class="col-6">揃え
+                      <select class="form-select form-select-sm dz" data-k="align">
+                        {% for ak,al in {'left':'左','center':'中央','right':'右'}.items() %}
+                        <option value="{{ ak }}" {% if ov.get('align','center')==ak %}selected{% endif %}>{{ al }}</option>
+                        {% endfor %}
+                      </select></div>
+                  </div>
+                  <label class="d-block mb-2">
+                    <input type="checkbox" class="dz" data-k="shadow" {% if ov.get('shadow') %}checked{% endif %}> 影をつける
+                  </label>
+
+                  <div class="fw-bold text-muted mb-1">フレーム</div>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">フレーム色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="frame_color"
+                             value="{{ ov.get('frame_color') | rgbhex('#ffffff') }}"></div>
+                    <div class="col-6">外フチ色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="outer_color"
+                             value="{{ ov.get('outer_color') | rgbhex('#000000') }}"></div>
+                  </div>
+                  <label class="d-block mb-1">フレーム太さ
+                    <input type="range" class="form-range dz" data-k="frame_width" min="0" max="30" step="1"
+                           value="{{ ov.get('frame_width', 14) }}"></label>
+                  <label class="d-block mb-2">
+                    <input type="checkbox" class="dz" data-k="frame_shadow"
+                           {% if ov.get('frame_shadow', True) %}checked{% endif %}> 影をつける
+                  </label>
+
+                  <div class="fw-bold text-muted mb-1 d-flex justify-content-between">
+                    <span>装飾</span>
+                    <select class="form-select form-select-sm w-auto add-deco" style="font-size:.7rem">
+                      <option value="">＋追加</option>
+                      {% for dk, dl in DECORATIONS.items() %}<option value="{{ dk }}">{{ dl }}</option>{% endfor %}
+                    </select>
+                  </div>
+                  <div class="deco-list"></div>
+
+                  <button type="button" class="btn btn-sm btn-primary w-100 mt-2 save-design">
+                    <i class="bi bi-check2 me-1"></i>このデザインを保存
+                  </button>
+                </div>
+              </div>
+
               {% if item['error_message'] %}
               <div class="text-danger mt-1" style="font-size:.72rem" title="{{ item['error_message'] }}">
                 <i class="bi bi-exclamation-circle me-1"></i>
@@ -275,11 +357,41 @@
         <button type="submit" class="btn btn-outline-primary">
           <i class="bi bi-save me-1"></i>編集内容を保存
         </button>
-        <span class="text-muted small ms-2">セリフ・テンプレート・調整（ズーム/位置/明るさ）を保存します。保存後に再生成で反映されます</span>
+        <span class="text-muted small ms-2">セリフ・テンプレート・調整を保存します。デザイン詳細は各スロットの「このデザインを保存」、保存後に再生成で反映されます</span>
       </div>
     </div>
   </div>
 </form>
+
+{# seed existing per-slot design state for JS #}
+<script id="seed-data" type="application/json">{{ seed_json | safe }}</script>
+
+<!-- デザインプリセット -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-bookmark-star me-2"></i>デザインプリセット</h5>
+    <div class="d-flex flex-wrap gap-3 align-items-end">
+      <form method="post" action="{{ url_for('stamps.apply_preset', set_id=stamp_set['id']) }}"
+            class="d-flex align-items-end gap-2">
+        <div>
+          <label class="form-label small mb-1">保存済みプリセット</label>
+          <select class="form-select form-select-sm" name="preset_id" style="width:auto">
+            {% for p in presets %}<option value="{{ p['id'] }}">{{ p['name'] }}</option>{% endfor %}
+          </select>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" {% if not presets %}disabled{% endif %}>全体に適用</button>
+      </form>
+      <div class="d-flex align-items-end gap-2">
+        <div>
+          <label class="form-label small mb-1">スロット1のデザインをプリセット保存</label>
+          <input type="text" class="form-control form-control-sm" id="preset-name" placeholder="プリセット名" style="width:auto">
+        </div>
+        <button class="btn btn-sm btn-outline-success" id="save-preset-btn">保存</button>
+      </div>
+    </div>
+    <p class="text-muted small mt-2 mb-0">プリセットを適用すると全スロットの文字色・フォント・フレーム等が揃います</p>
+  </div>
+</div>
 
 <!-- 操作 -->
 <div class="card border-0 shadow-sm mb-4">
@@ -404,11 +516,90 @@ document.querySelectorAll('.del-btn').forEach(b => b.addEventListener('click', (
     .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); });
 }));
 
-// ── realtime preview: re-render slot image when its controls change ──
+// ── design state (overrides + decorations) ──
+const SEED = JSON.parse(document.getElementById('seed-data').textContent);
+const decoState = {};   // {position: [parts]}
+Object.keys(SEED.decorations || {}).forEach(p => decoState[p] = SEED.decorations[p] || []);
+
+function hexToRgb(hex) {
+  const m = hex.replace('#','');
+  return [parseInt(m.slice(0,2),16), parseInt(m.slice(2,4),16), parseInt(m.slice(4,6),16)];
+}
+
+function gatherOverrides(col) {
+  const panel = col.querySelector('.design-panel');
+  if (!panel) return {};
+  const ov = {};
+  panel.querySelectorAll('.dz').forEach(ctrl => {
+    const k = ctrl.dataset.k;
+    if (ctrl.type === 'color') ov[k] = hexToRgb(ctrl.value);
+    else if (ctrl.type === 'checkbox') ov[k] = ctrl.checked;
+    else if (ctrl.type === 'number' || ctrl.type === 'range') {
+      const n = parseFloat(ctrl.value);
+      if (!isNaN(n)) ov[k] = (k === 'font_size' && n === 0) ? null : n;
+    } else ov[k] = ctrl.value;
+  });
+  return ov;
+}
+
+// ── decoration editor ──
+const DECO_LABELS = {{ DECORATIONS | tojson }};
+function renderDecoList(col) {
+  const pos = col.dataset.position;
+  const list = col.querySelector('.deco-list');
+  if (!list) return;
+  const parts = decoState[pos] || [];
+  list.innerHTML = '';
+  parts.forEach((part, idx) => {
+    const row = document.createElement('div');
+    row.className = 'border rounded p-1 mb-1';
+    row.innerHTML =
+      `<div class="d-flex justify-content-between align-items-center">
+         <span>${DECO_LABELS[part.type] || part.type}</span>
+         <button type="button" class="btn btn-sm btn-light p-0 px-1 text-danger deco-del" data-idx="${idx}">×</button>
+       </div>
+       <div class="d-flex gap-1 align-items-center" style="font-size:.65rem">
+         <span>大</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="size" min="10" max="80" value="${part.size||28}">
+         <span>回</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="rotation" min="0" max="360" value="${part.rotation||0}">
+         <input type="color" class="form-control form-control-color form-control-sm deco-f" data-idx="${idx}" data-f="color" value="${rgbToHex(part.color)}">
+       </div>
+       <div class="d-flex gap-1 align-items-center" style="font-size:.65rem">
+         <span>X</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="x" min="0" max="1" step="0.02" value="${part.x??0.5}">
+         <span>Y</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="y" min="0" max="1" step="0.02" value="${part.y??0.5}">
+       </div>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll('.deco-del').forEach(b => b.addEventListener('click', () => {
+    decoState[pos].splice(parseInt(b.dataset.idx), 1); renderDecoList(col); schedulePreview(col);
+  }));
+  list.querySelectorAll('.deco-f').forEach(inp => inp.addEventListener('input', () => {
+    const i = parseInt(inp.dataset.idx), f = inp.dataset.f;
+    decoState[pos][i][f] = (f === 'color') ? hexToRgb(inp.value)
+                          : (f === 'x' || f === 'y') ? parseFloat(inp.value) : parseInt(inp.value);
+    schedulePreview(col);
+  }));
+}
+function rgbToHex(rgb) {
+  const a = rgb || [255,90,120];
+  return '#' + a.slice(0,3).map(v => Math.max(0,Math.min(255,v|0)).toString(16).padStart(2,'0')).join('');
+}
+
+document.querySelectorAll('.add-deco').forEach(sel => sel.addEventListener('change', () => {
+  if (!sel.value) return;
+  const col = sel.closest('.slot-col');
+  const pos = col.dataset.position;
+  (decoState[pos] = decoState[pos] || []).push(
+    {type: sel.value, x:0.5, y:0.2, size:28, rotation:0, color:[255,90,120]});
+  sel.value = '';
+  renderDecoList(col); schedulePreview(col);
+}));
+document.querySelectorAll('.slot-col').forEach(renderDecoList);
+
+// ── realtime preview: same render path as generation (preview == output) ──
 const textStyleSel = document.querySelector('select[name="text_style"]');
 function refreshPreview(col) {
   const pos = col.dataset.position;
-  const photo = col.dataset.photo;  // /photo?path=... URL
+  const photo = col.dataset.photo;
   const m = photo.match(/[?&]path=([^&]+)/);
   if (!m) return;
   const img = col.querySelector('.slot-img');
@@ -421,6 +612,8 @@ function refreshPreview(col) {
     offset_x: col.querySelector('input[name^="offset_x_"]').value,
     offset_y: col.querySelector('input[name^="offset_y_"]').value,
     brightness: col.querySelector('input[name^="brightness_"]').value,
+    style: JSON.stringify(gatherOverrides(col)),
+    deco: JSON.stringify(decoState[pos] || []),
   });
   img.style.opacity = '0.5';
   img.src = `/stamps/${SET_ID}/preview?` + params.toString();
@@ -435,7 +628,7 @@ function schedulePreview(col) {
 
 document.querySelectorAll('.slot-col').forEach(col => {
   col.querySelectorAll('input, select').forEach(ctrl => {
-    const ev = ctrl.tagName === 'SELECT' ? 'change' : 'input';
+    const ev = (ctrl.tagName === 'SELECT' || ctrl.type === 'checkbox') ? 'change' : 'input';
     ctrl.addEventListener(ev, () => schedulePreview(col));
   });
 });
@@ -443,6 +636,28 @@ if (textStyleSel) {
   textStyleSel.addEventListener('change', () =>
     document.querySelectorAll('.slot-col').forEach(refreshPreview));
 }
+
+// ── save design (overrides + decorations) ──
+document.querySelectorAll('.save-design').forEach(btn => btn.addEventListener('click', () => {
+  const col = btn.closest('.slot-col');
+  const pos = col.dataset.position;
+  postJson(`/stamps/${SET_ID}/item/${pos}/design`,
+           {overrides: gatherOverrides(col), decorations: decoState[pos] || []})
+    .then(r => r.json()).then(d => {
+      btn.innerHTML = d.ok ? '<i class="bi bi-check2"></i> 保存しました' : '保存失敗';
+      setTimeout(() => btn.innerHTML = '<i class="bi bi-check2 me-1"></i>このデザインを保存', 1500);
+    });
+}));
+
+// ── save preset from slot 1 ──
+const savePresetBtn = document.getElementById('save-preset-btn');
+if (savePresetBtn) savePresetBtn.addEventListener('click', () => {
+  const name = document.getElementById('preset-name').value.trim();
+  if (!name) { alert('プリセット名を入力してください'); return; }
+  const col = document.querySelector('.slot-col');
+  postJson('/presets', {name, overrides: gatherOverrides(col)})
+    .then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+});
 
 // ── photo swap ──
 let swapPosition = null, allPhotos = [];

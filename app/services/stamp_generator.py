@@ -48,6 +48,9 @@ class StampItemSpec:
     offset_x: float = 0.0
     offset_y: float = 0.0
     brightness: float = 0.0
+    # Free-design overrides (text + frame) and decoration parts
+    overrides: dict | None = None
+    decorations: list | None = None
 
 
 @dataclass
@@ -162,7 +165,8 @@ def render_preview(item: StampItemSpec) -> Image.Image:
     adj = Adjustments(zoom=item.zoom, offset_x=item.offset_x,
                       offset_y=item.offset_y, brightness=item.brightness)
     processor = CharacterProcessor(style=item.style, expression=item.expression)
-    steps = processor.process(big, item.caption, item.text_style, adjustments=adj)
+    steps = processor.process(big, item.caption, item.text_style, adjustments=adj,
+                              overrides=item.overrides, decorations=item.decorations)
     stamp = steps.stamp.copy()
     stamp.thumbnail((STICKER_MAX_W, STICKER_MAX_H), Image.Resampling.LANCZOS)
     return stamp
@@ -192,7 +196,8 @@ def _process_one(
             offset_y=item.offset_y, brightness=item.brightness,
         )
         processor = CharacterProcessor(style=item.style, expression=item.expression)
-        steps = processor.process(big, item.caption, item.text_style, adjustments=adj)
+        steps = processor.process(big, item.caption, item.text_style, adjustments=adj,
+                              overrides=item.overrides, decorations=item.decorations)
 
         stage = "quality"
         warnings = analyze_quality(big, steps.face_info, item.caption, item.text_style)
