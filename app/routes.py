@@ -24,6 +24,10 @@ from .services.review import run_review
 from .services.design_presets import (
     BUILTIN_PRESETS, preset_overrides, preset_decorations, preset_main_bg,
 )
+from .services.planner import (
+    SCENES, TARGETS, MOODS, PlannerInput, generate_plan,
+    ALLOWED_COUNTS as PLANNER_COUNTS,
+)
 from .db import ALLOWED_COUNTS
 import io
 import json
@@ -160,6 +164,98 @@ def create_set():
             (set_id, i + 1, photo["path"], captions[i], templates[i]),
         )
     db.commit()
+    return redirect(url_for("stamps.detail", set_id=set_id))
+
+
+# ---------------------------------------------------------------------------
+# AI stamp-set planner
+# ---------------------------------------------------------------------------
+
+@bp.route("/planner")
+def planner():
+    """Planner input screen (scene / target / mood / count)."""
+    return render_template("planner.html", SCENES=SCENES, TARGETS=TARGETS,
+                           MOODS=MOODS, ALLOWED_COUNTS=ALLOWED_COUNTS)
+
+
+@bp.route("/planner/generate", methods=["POST"])
+def planner_generate():
+    """Run the planner and show the editable plan preview."""
+    inp = PlannerInput(
+        scene=request.form.get("scene", "family"),
+        target=request.form.get("target", "anyone"),
+        mood=request.form.get("mood", "cute"),
+        count=request.form.get("count", type=int) or 8,
+    )
+    result = generate_plan(inp, photos=_get_photos())
+
+    # Build editable slot rows (phrase + recommended photo)
+    slots = []
+    for i, phrase in enumerate(result.phrases):
+        photo = result.recommended_photos[i] if i < len(result.recommended_photos) else ""
+        slots.append({"position": i + 1, "caption": phrase, "photo_path": photo})
+
+    return render_template(
+        "planner_preview.html",
+        result=result, slots=slots, inp=inp,
+        SCENES=SCENES, MOODS=MOODS, TEMPLATES=TEMPLATES,
+        BUILTIN_PRESETS=BUILTIN_PRESETS,
+    )
+
+
+@bp.route("/planner/create", methods=["POST"])
+def planner_create():
+    """One-click: build the set from the plan, apply preset, and generate."""
+    name = request.form.get("title", "").strip() or "新しいスタンプ"
+    description = request.form.get("description", "").strip()
+    theme = request.form.get("theme", "family_pop")
+    if theme not in THEMES:
+        theme = "simple_icon"
+    preset = request.form.get("preset", "")
+    count = request.form.get("count", type=int) or 8
+    if count not in ALLOWED_COUNTS:
+        count = 8
+
+    # Collect slots
+    captions, photos = [], []
+    for i in range(1, count + 1):
+        cap = request.form.get(f"caption_{i}", "").strip()
+        photo = request.form.get(f"photo_{i}", "").strip()
+        captions.append(cap)
+        photos.append(photo)
+
+    # Fill any missing photos by cycling the chosen ones
+    chosen = [p for p in photos if p]
+    if not chosen:
+        return redirect(url_for("stamps.planner"))
+    photos = [photos[i] if photos[i] else chosen[i % len(chosen)] for i in range(count)]
+
+    cfg = BUILTIN_PRESETS.get(preset)
+    text_style = cfg.text_style if cfg else "bubble"
+    base_tmpl = cfg.base_template if cfg else "simple_circle"
+    ov = preset_overrides(preset) if cfg else None
+    deco = preset_decorations(preset) if cfg else None
+
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO stamp_sets (name, description, status, theme, style, text_style, "
+        "stamp_count, preset_key, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?, datetime('now','localtime'))",
+        (name, description, "draft", theme, base_tmpl, text_style, count, preset or None),
+    )
+    set_id = cur.lastrowid
+    for i in range(count):
+        db.execute(
+            "INSERT INTO stamp_items (set_id, position, photo_path, caption, item_template, "
+            "style_json, decoration_json) VALUES (?,?,?,?,?,?,?)",
+            (set_id, i + 1, photos[i], captions[i], base_tmpl,
+             json.dumps(ov, ensure_ascii=False) if ov else None,
+             json.dumps(deco, ensure_ascii=False) if deco else None),
+        )
+    db.commit()
+
+    # Hand off to the existing generation flow (creates stickers + main/tab + ZIP)
+    _run_generation(db, set_id)
     return redirect(url_for("stamps.detail", set_id=set_id))
 
 
@@ -331,6 +427,55 @@ def reorder(set_id: int):
 # ---------------------------------------------------------------------------
 # Generate
 # ---------------------------------------------------------------------------
+
+def _run_generation(db, set_id: int) -> None:
+    """Generate all stickers + main/tab + ZIP for a set and persist results.
+    Shared by the generate route and the planner one-click create."""
+    stamp_set = db.execute("SELECT * FROM stamp_sets WHERE id = ?", (set_id,)).fetchone()
+    if stamp_set is None:
+        return
+    items = db.execute(
+        "SELECT * FROM stamp_items WHERE set_id = ? ORDER BY position", (set_id,)
+    ).fetchall()
+    text_style = stamp_set["text_style"] or "bubble"
+    theme = stamp_set["theme"] or "simple_icon"
+    default_tmpl = stamp_set["style"] or "simple_circle"
+    output_dir = Path(current_app.config["OUTPUT_DIR"]) / f"set_{set_id:04d}"
+    specs = [_row_to_spec(i, default_tmpl, text_style) for i in items]
+
+    db.execute("UPDATE stamp_sets SET status='generating', output_dir=? WHERE id=?",
+               (str(output_dir), set_id))
+    db.commit()
+
+    main_bg = preset_main_bg(stamp_set["preset_key"]) if stamp_set["preset_key"] else None
+    try:
+        summary = generate_stamp_set(specs, output_dir, theme_name=theme,
+                                     set_name=stamp_set["name"], main_bg=main_bg)
+    except Exception as exc:
+        err_msg = f"{type(exc).__name__}: {exc}"
+        for item in items:
+            db.execute(
+                "UPDATE stamp_items SET error_message=? WHERE set_id=? AND position=? AND sticker_path IS NULL",
+                (err_msg, set_id, item["position"]))
+        db.execute("UPDATE stamp_sets SET status='error' WHERE id=?", (set_id,))
+        db.commit()
+        return
+
+    for result in summary.results:
+        warnings_json = json.dumps(result.warnings, ensure_ascii=False) if result.warnings else None
+        db.execute(
+            "UPDATE stamp_items SET sticker_path=?, preview_path=?, warnings=?, error_message=? "
+            "WHERE set_id=? AND position=?",
+            (result.sticker_path, result.preview_path, warnings_json,
+             result.error if not result.success else None, set_id, result.position))
+
+    need = stamp_set["stamp_count"] or len(items)
+    new_status = "generated" if summary.success_count >= need else "partial"
+    db.execute("UPDATE stamp_sets SET status=?, zip_path=? WHERE id=?",
+               (new_status, summary.zip_path, set_id))
+    _touch(db, set_id)
+    db.commit()
+
 
 @bp.route("/stamps/<int:set_id>/generate", methods=["POST"])
 def generate(set_id: int):
