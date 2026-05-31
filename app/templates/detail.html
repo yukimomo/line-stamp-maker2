@@ -152,7 +152,7 @@
 
       <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3" id="slot-grid">
         {% for item in items %}
-        <div class="col slot-col" data-position="{{ item['position'] }}"
+        <div class="col slot-col" id="slot-{{ item['position'] }}" data-position="{{ item['position'] }}"
              data-photo="{{ item['photo_path'] | photourl }}">
           <div class="card h-100 border
             {% if item['error_message'] %}border-danger

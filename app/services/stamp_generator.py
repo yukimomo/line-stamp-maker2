@@ -318,7 +318,9 @@ def _build_zip(
     output_dir: Path,
     stickers_dir: Path,
     results: list[GenerationResult],
+    extra_files: list[str] | None = None,
 ) -> Path:
+    """Build upload.zip: stickers + main/tab (+ optional extra files in output_dir)."""
     zip_path = output_dir / "upload.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for r in results:
@@ -326,8 +328,83 @@ def _build_zip(
                 p = Path(r.sticker_path)
                 if p.exists():
                     zf.write(p, p.name)
-        for fname in ("main.png", "tab.png"):
+        for fname in ("main.png", "tab.png", *(extra_files or [])):
             p = output_dir / fname
             if p.exists():
                 zf.write(p, fname)
     return zip_path
+
+
+# ---------------------------------------------------------------------------
+# Application package (metadata.json / application_note.txt / checklist.txt)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+
+def write_application_files(
+    output_dir: Path,
+    meta: dict,
+    count: int,
+    checklist_lines: list[str],
+) -> list[str]:
+    """
+    Write metadata.json, application_note.txt, checklist.txt into output_dir.
+    Returns the list of written filenames.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    (output_dir / "metadata.json").write_text(
+        _json.dumps({**meta, "stamp_count": count}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    note = (
+        "LINE Creators Market 申請メモ\n"
+        "=============================\n\n"
+        f"タイトル: {meta.get('title', '')}\n\n"
+        f"説明文:\n{meta.get('description', '')}\n\n"
+        f"作者名: {meta.get('author', '')}\n"
+        f"コピーライト: {meta.get('copyright', '')}\n"
+        f"カテゴリ: {meta.get('category', '')}\n"
+        f"タグ: {meta.get('tags', '')}\n"
+        f"販売エリア: {meta.get('sales_area', '')}\n"
+        f"言語: {meta.get('language', '')}\n"
+        f"価格メモ: {meta.get('price_note', '')}\n\n"
+        f"スタンプ数: {count}\n\n"
+        f"審査メモ:\n{meta.get('review_note', '')}\n"
+    )
+    (output_dir / "application_note.txt").write_text(note, encoding="utf-8")
+
+    checklist = "LINE 申請前チェックリスト\n========================\n\n" + "\n".join(checklist_lines) + "\n"
+    (output_dir / "checklist.txt").write_text(checklist, encoding="utf-8")
+
+    return ["metadata.json", "application_note.txt", "checklist.txt"]
+
+
+def build_application_package(
+    output_dir: Path,
+    meta: dict,
+    count: int,
+    checklist_lines: list[str],
+    theme_name: str = "simple_icon",
+    set_name: str = "",
+) -> str | None:
+    """
+    Write application files and rebuild upload.zip including them.
+    Returns the zip path (or None if no stickers exist).
+    """
+    output_dir = Path(output_dir)
+    stickers_dir = output_dir / "stickers"
+    sticker_paths = sorted(stickers_dir.glob("stamp_*.png")) if stickers_dir.exists() else []
+    if not sticker_paths:
+        return None
+
+    # Ensure main/tab exist
+    if not (output_dir / "main.png").exists() or not (output_dir / "tab.png").exists():
+        _generate_themed_main_tab(sticker_paths, theme_name, set_name, output_dir)
+
+    extra = write_application_files(output_dir, meta, count, checklist_lines)
+    results = [GenerationResult(position=i + 1, success=True, sticker_path=str(p))
+               for i, p in enumerate(sticker_paths)]
+    return str(_build_zip(output_dir, stickers_dir, results, extra_files=extra))

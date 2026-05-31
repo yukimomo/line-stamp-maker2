@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS stamp_sets (
     text_style  TEXT    NOT NULL DEFAULT 'bubble',
     expression  TEXT    NOT NULL DEFAULT 'none',
     stamp_count INTEGER NOT NULL DEFAULT 8,
+    meta_json     TEXT,
+    submit_status TEXT NOT NULL DEFAULT 'editing',
     output_dir  TEXT,
     zip_path    TEXT
 );
@@ -75,6 +77,8 @@ _MIGRATIONS = [
     "ALTER TABLE stamp_sets  ADD COLUMN stamp_count INTEGER NOT NULL DEFAULT 8",
     "ALTER TABLE stamp_items ADD COLUMN style_json      TEXT",
     "ALTER TABLE stamp_items ADD COLUMN decoration_json TEXT",
+    "ALTER TABLE stamp_sets  ADD COLUMN meta_json     TEXT",
+    "ALTER TABLE stamp_sets  ADD COLUMN submit_status TEXT NOT NULL DEFAULT 'editing'",
 ]
 
 # Run after _MIGRATIONS to back-fill nullable columns
