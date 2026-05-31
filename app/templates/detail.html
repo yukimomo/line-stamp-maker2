@@ -152,7 +152,7 @@
 
       <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3" id="slot-grid">
         {% for item in items %}
-        <div class="col slot-col" data-position="{{ item['position'] }}"
+        <div class="col slot-col" id="slot-{{ item['position'] }}" data-position="{{ item['position'] }}"
              data-photo="{{ item['photo_path'] | photourl }}">
           <div class="card h-100 border
             {% if item['error_message'] %}border-danger
@@ -366,10 +366,40 @@
 {# seed existing per-slot design state for JS #}
 <script id="seed-data" type="application/json">{{ seed_json | safe }}</script>
 
-<!-- デザインプリセット -->
+<!-- デザインプリセット（組み込み） -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body">
-    <h5 class="card-title mb-3"><i class="bi bi-bookmark-star me-2"></i>デザインプリセット</h5>
+    <h5 class="card-title mb-1"><i class="bi bi-stars me-2"></i>デザインプリセット（おすすめ）</h5>
+    <p class="text-muted small mb-3">クリックでセット全体に統一感のあるデザインを一括適用します</p>
+    <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-2">
+      {% for key, p in BUILTIN_PRESETS.items() %}
+      <div class="col">
+        <form method="post" action="{{ url_for('stamps.apply_builtin_preset', set_id=stamp_set['id']) }}">
+          <input type="hidden" name="preset_key" value="{{ key }}">
+          <button class="btn w-100 h-100 p-2 text-start
+                  {% if stamp_set['preset_key']==key %}btn-success{% else %}btn-outline-success{% endif %}"
+                  style="font-size:.82rem"
+                  onclick="return confirm('「{{ p.label }}」を全スタンプに適用しますか？個別のデザインは上書きされます。')">
+            <div><span style="font-size:1.3rem">{{ p.icon }}</span></div>
+            <div class="fw-bold">{{ p.label }}</div>
+            <div class="d-flex gap-1 mt-1">
+              <span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid #ccc;background:rgb{{ p.bg_color }}"></span>
+              <span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid #ccc;background:rgb{{ p.frame_color }}"></span>
+              <span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid #ccc;background:rgb{{ p.text_color }}"></span>
+            </div>
+            <div class="text-muted mt-1" style="font-size:.66rem">推奨: {{ p.caption_category }}</div>
+          </button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- 保存済みプリセット -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-bookmark-star me-2"></i>保存済みプリセット</h5>
     <div class="d-flex flex-wrap gap-3 align-items-end">
       <form method="post" action="{{ url_for('stamps.apply_preset', set_id=stamp_set['id']) }}"
             class="d-flex align-items-end gap-2">

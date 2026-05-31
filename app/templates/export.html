@@ -1,5 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ stamp_set['name'] }} - エクスポート確認{% endblock %}
+{% block title %}{{ stamp_set['name'] }} - 申請準備{% endblock %}
+{% set status_labels = {'editing':'編集中','unchecked':'チェック未実施','needs_fix':'要修正',
+                        'ready':'申請準備OK','exported':'ZIP出力済み'} %}
 {% block content %}
 
 <div class="mb-3">
@@ -8,75 +10,130 @@
   </a>
 </div>
 
-<h2 class="fw-bold mb-4"><i class="bi bi-box-arrow-up text-success me-2"></i>エクスポート確認</h2>
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <h2 class="fw-bold mb-0"><i class="bi bi-clipboard-check text-success me-2"></i>LINE 申請準備</h2>
+  <span class="badge fs-6
+    {% if submit_status == 'ready' %}bg-success
+    {% elif submit_status == 'exported' %}bg-primary
+    {% elif submit_status == 'needs_fix' %}bg-danger
+    {% else %}bg-secondary{% endif %}">
+    {{ status_labels.get(submit_status, submit_status) }}
+  </span>
+</div>
 
+<!-- サマリー -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body">
     <div class="row text-center g-3">
-      <div class="col-6 col-md-3">
-        <div class="fs-2 fw-bold">{{ items|length }}</div>
-        <div class="text-muted small">スタンプ数</div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="fs-2 fw-bold">{{ stamp_set['stamp_count'] }}</div>
-        <div class="text-muted small">申請枚数</div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="fs-2">{{ '✓' if report and report.is_valid else '⚠' }}</div>
-        <div class="text-muted small">規格チェック</div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="fs-2">{{ report.warnings|length if report else 0 }}</div>
-        <div class="text-muted small">警告</div>
-      </div>
+      <div class="col-6 col-md-3"><div class="fs-2 fw-bold">{{ items|length }}</div>
+        <div class="text-muted small">スタンプ数</div></div>
+      <div class="col-6 col-md-3"><div class="fs-2 fw-bold">{{ stamp_set['stamp_count'] }}</div>
+        <div class="text-muted small">申請枚数</div></div>
+      <div class="col-6 col-md-3"><div class="fs-2">{{ '✓' if report.is_ready else '⚠' }}</div>
+        <div class="text-muted small">準備状況</div></div>
+      <div class="col-6 col-md-3"><div class="fs-2">{{ report.errors|length }}</div>
+        <div class="text-muted small">エラー</div></div>
     </div>
   </div>
 </div>
 
-<!-- チェック結果 -->
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-body">
-    <h5 class="card-title mb-3"><i class="bi bi-clipboard-check me-2"></i>チェック結果</h5>
-    {% if report %}
-      {% if report.errors %}
-      <div class="alert alert-danger">
-        <strong><i class="bi bi-x-circle me-1"></i>エラー（申請不可）</strong>
-        <ul class="mb-0 mt-2">{% for e in report.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+<div class="row g-4">
+  <!-- 左: 申請メタ情報 -->
+  <div class="col-lg-6">
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="card-title mb-0"><i class="bi bi-card-list me-2"></i>申請用メタ情報</h5>
+          <form method="post" action="{{ url_for('stamps.suggest_meta', set_id=stamp_set['id']) }}">
+            <button class="btn btn-sm btn-outline-success"><i class="bi bi-magic me-1"></i>自動生成</button>
+          </form>
+        </div>
+        <form method="post" action="{{ url_for('stamps.save_meta', set_id=stamp_set['id']) }}">
+          {% for key, label in META_FIELDS.items() %}
+          <div class="mb-2">
+            <label class="form-label small fw-semibold mb-1">{{ label }}</label>
+            {% if key == 'description' or key == 'review_note' %}
+            <textarea class="form-control form-control-sm" name="{{ key }}" rows="3">{{ meta.get(key, '') }}</textarea>
+            {% elif key == 'category' %}
+            <select class="form-select form-select-sm" name="category">
+              {% for c in LINE_CATEGORIES %}
+              <option value="{{ c }}" {% if meta.get('category')==c %}selected{% endif %}>{{ c }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" class="form-control form-control-sm" name="{{ key }}" value="{{ meta.get(key, '') }}">
+            {% endif %}
+          </div>
+          {% endfor %}
+          <button class="btn btn-outline-primary btn-sm mt-1"><i class="bi bi-save me-1"></i>メタ情報を保存</button>
+        </form>
       </div>
-      {% else %}
-      <div class="alert alert-success mb-3">
-        <i class="bi bi-check-circle-fill me-1"></i>
-        サイズ・PNG形式・main.png・tab.png・枚数すべて OK
-      </div>
-      {% endif %}
+    </div>
+  </div>
 
-      {% if report.warnings %}
-      <div class="alert alert-warning mb-0">
-        <strong><i class="bi bi-exclamation-triangle me-1"></i>警告（申請は可能ですが確認推奨）</strong>
-        <ul class="mb-0 mt-2">{% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+  <!-- 右: チェック結果 -->
+  <div class="col-lg-6">
+    {% macro issue_list(title, icon, cat, badge) %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <h6 class="fw-bold mb-2"><i class="bi {{ icon }} me-1"></i>{{ title }}</h6>
+        {% set issues = report.by_category(cat) %}
+        {% if not issues %}
+        <div class="text-success small"><i class="bi bi-check2 me-1"></i>問題なし</div>
+        {% else %}
+          {% for i in issues %}
+          <div class="d-flex justify-content-between align-items-start gap-2 border-bottom py-1">
+            <div class="small
+              {% if i.level=='error' %}text-danger{% elif i.level=='advisory' %}text-secondary{% else %}text-warning-emphasis{% endif %}">
+              {% if i.level=='error' %}<i class="bi bi-x-circle me-1"></i>
+              {% elif i.level=='advisory' %}<i class="bi bi-info-circle me-1"></i>
+              {% else %}<i class="bi bi-exclamation-triangle me-1"></i>{% endif %}
+              {% if i.position %}<span class="badge bg-light text-dark border me-1">#{{ i.position }}</span>{% endif %}
+              {{ i.message }}
+            </div>
+            {% if i.position %}
+            <a class="btn btn-sm btn-outline-primary py-0 px-2 flex-shrink-0"
+               href="{{ url_for('stamps.detail', set_id=stamp_set['id']) }}#slot-{{ i.position }}">
+              {{ '写真変更' if i.fix=='photo' else '編集' }}
+            </a>
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% endif %}
       </div>
-      {% else %}
-      <div class="text-success"><i class="bi bi-check2 me-1"></i>警告なし</div>
-      {% endif %}
-    {% else %}
-      <div class="alert alert-secondary mb-0">まだ生成されていません。先にスタンプを生成してください。</div>
-    {% endif %}
+    </div>
+    {% endmacro %}
+
+    {{ issue_list('画像仕様', 'bi-image', 'image') }}
+    {{ issue_list('品質チェック', 'bi-stars', 'quality') }}
+    {{ issue_list('内容チェック', 'bi-files', 'content') }}
+    {{ issue_list('審査リスク（注意）', 'bi-shield-exclamation', 'risk') }}
   </div>
 </div>
 
-<!-- ダウンロード -->
-<div class="d-flex gap-2">
-  {% if stamp_set['zip_path'] and report and report.is_valid %}
-  <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-success btn-lg">
-    <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード
-  </a>
-  {% elif stamp_set['zip_path'] %}
-  <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-outline-warning btn-lg"
-     onclick="return confirm('規格エラーがあります。それでもダウンロードしますか？')">
-    <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード（警告あり）
-  </a>
-  {% endif %}
-  <a href="{{ url_for('stamps.detail', set_id=stamp_set['id']) }}" class="btn btn-outline-secondary btn-lg">編集に戻る</a>
+<!-- パッケージ出力 -->
+<div class="card border-0 shadow-sm my-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-box-seam me-2"></i>申請パッケージ出力</h5>
+    <p class="text-muted small">
+      ZIP に <code>stamp_01〜{{ '%02d'|format(items|length) }}.png</code> / <code>main.png</code> /
+      <code>tab.png</code> / <code>metadata.json</code> / <code>application_note.txt</code> /
+      <code>checklist.txt</code> を含めます。
+    </p>
+    <div class="d-flex gap-2 flex-wrap">
+      <form method="post" action="{{ url_for('stamps.package', set_id=stamp_set['id']) }}">
+        <button class="btn btn-success btn-lg"
+                {% if report.errors %}onclick="return confirm('エラーがありますがパッケージを作成しますか？')"{% endif %}>
+          <i class="bi bi-box-seam me-1"></i>申請パッケージを作成
+        </button>
+      </form>
+      {% if stamp_set['zip_path'] %}
+      <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-download me-1"></i>ZIP をダウンロード
+      </a>
+      {% endif %}
+    </div>
+  </div>
 </div>
 
 {% endblock %}
