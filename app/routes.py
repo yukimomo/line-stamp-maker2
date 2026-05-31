@@ -151,7 +151,7 @@ def detail(set_id: int):
     rows = db.execute(
         "SELECT * FROM stamp_items WHERE set_id = ? ORDER BY position", (set_id,)
     ).fetchall()
-    # Parse per-item warnings JSON into a list for the template
+    # Parse per-item JSON (warnings / design overrides / decorations)
     items = []
     for r in rows:
         d = dict(r)
@@ -159,7 +159,13 @@ def detail(set_id: int):
             d["warning_list"] = json.loads(r["warnings"]) if r["warnings"] else []
         except (ValueError, TypeError):
             d["warning_list"] = []
+        d["overrides"] = _json_or_none(r["style_json"]) or {}
+        d["decorations"] = _json_or_none(r["decoration_json"]) or []
         items.append(d)
+
+    presets = db.execute(
+        "SELECT id, name FROM design_presets ORDER BY created_at DESC"
+    ).fetchall()
 
     validation = None
     if stamp_set["status"] in ("generated", "partial") and stamp_set["output_dir"]:
@@ -173,15 +179,25 @@ def detail(set_id: int):
         except Exception:
             pass
 
+    from .services.text_styles import FONT_CHOICES
+    from .services.stamp_templates import DECORATIONS
+    seed = {
+        "overrides": {it["position"]: it["overrides"] for it in items},
+        "decorations": {it["position"]: it["decorations"] for it in items},
+    }
     return render_template(
         "detail.html",
         stamp_set=stamp_set,
         items=items,
         validation=validation,
+        presets=presets,
+        seed_json=json.dumps(seed, ensure_ascii=False),
         ALLOWED_COUNTS=ALLOWED_COUNTS,
         TEMPLATES=TEMPLATES,
         TEXT_STYLES=TEXT_STYLES,
         THEMES=THEMES,
+        FONT_CHOICES=FONT_CHOICES,
+        DECORATIONS=DECORATIONS,
         caption_templates=CAPTION_TEMPLATES,
     )
 
@@ -305,20 +321,7 @@ def generate(set_id: int):
     default_tmpl = stamp_set["style"] or "simple_circle"
 
     output_dir = Path(current_app.config["OUTPUT_DIR"]) / f"set_{set_id:04d}"
-    specs = [
-        StampItemSpec(
-            position=i["position"],
-            photo_path=i["photo_path"],
-            caption=i["caption"],
-            style=(i["item_template"] or default_tmpl),
-            text_style=text_style,
-            zoom=i["zoom"] if i["zoom"] is not None else 1.0,
-            offset_x=i["offset_x"] if i["offset_x"] is not None else 0.0,
-            offset_y=i["offset_y"] if i["offset_y"] is not None else 0.0,
-            brightness=i["brightness"] if i["brightness"] is not None else 0.0,
-        )
-        for i in items
-    ]
+    specs = [_row_to_spec(i, default_tmpl, text_style) for i in items]
 
     db.execute(
         "UPDATE stamp_sets SET status = 'generating', output_dir = ? WHERE id = ?",
@@ -400,6 +403,40 @@ def delete_set(set_id: int):
     db.execute("DELETE FROM stamp_sets WHERE id=?", (set_id,))
     db.commit()
     return redirect(url_for("stamps.index"))
+
+
+# ---------------------------------------------------------------------------
+# Design-override helpers
+# ---------------------------------------------------------------------------
+
+def _json_or_none(s):
+    if not s:
+        return None
+    try:
+        v = json.loads(s)
+        return v or None
+    except (ValueError, TypeError):
+        return None
+
+
+def _row_to_spec(row, default_tmpl: str, text_style: str) -> StampItemSpec:
+    """Build a StampItemSpec from a stamp_items row, including design overrides."""
+    keys = row.keys() if hasattr(row, "keys") else []
+    style_json = row["style_json"] if "style_json" in keys else None
+    deco_json = row["decoration_json"] if "decoration_json" in keys else None
+    return StampItemSpec(
+        position=row["position"],
+        photo_path=row["photo_path"],
+        caption=row["caption"],
+        style=(row["item_template"] or default_tmpl),
+        text_style=text_style,
+        zoom=row["zoom"] if row["zoom"] is not None else 1.0,
+        offset_x=row["offset_x"] if row["offset_x"] is not None else 0.0,
+        offset_y=row["offset_y"] if row["offset_y"] is not None else 0.0,
+        brightness=row["brightness"] if row["brightness"] is not None else 0.0,
+        overrides=_json_or_none(style_json),
+        decorations=_json_or_none(deco_json),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +591,8 @@ def regenerate_one(set_id: int, position: int):
             style=tmpl, text_style=text_style,
             zoom=item["zoom"], offset_x=item["offset_x"],
             offset_y=item["offset_y"], brightness=item["brightness"],
+            overrides=_json_or_none(item["style_json"]),
+            decorations=_json_or_none(item["decoration_json"]),
         )
         out = Path(stamp_set["output_dir"])
         result = regenerate_item(spec, out)
@@ -575,7 +614,10 @@ def regenerate_one(set_id: int, position: int):
 def preview_item(set_id: int):
     """
     Live single-stamp preview (PNG), rendered from query params without saving.
-    Params: photo, caption, template, text_style, zoom, offset_x, offset_y, brightness.
+    Uses the SAME render path as final generation so preview == output.
+
+    Params: photo, caption, template, text_style, zoom, offset_x, offset_y,
+            brightness, and JSON params `style` (overrides) + `deco` (decorations).
     """
     photo = request.args.get("photo", "")
     if not photo or not Path(photo).is_file():
@@ -590,6 +632,8 @@ def preview_item(set_id: int):
         offset_x=_clamp(request.args.get("offset_x", type=float), -0.5, 0.5, 0.0),
         offset_y=_clamp(request.args.get("offset_y", type=float), -0.5, 0.5, 0.0),
         brightness=_clamp(request.args.get("brightness", type=float), -1.0, 1.0, 0.0),
+        overrides=_json_or_none(request.args.get("style")),
+        decorations=_json_or_none(request.args.get("deco")),
     )
     try:
         img = render_preview(spec)
@@ -599,6 +643,109 @@ def preview_item(set_id: int):
     img.save(buf, "PNG")
     buf.seek(0)
     return send_file(buf, mimetype="image/png")
+
+
+@bp.route("/stamps/<int:set_id>/item/<int:position>/design", methods=["POST"])
+def save_design(set_id: int, position: int):
+    """Save per-item design overrides + decorations (JSON body)."""
+    db = get_db()
+    item = db.execute(
+        "SELECT id FROM stamp_items WHERE set_id=? AND position=?", (set_id, position)
+    ).fetchone()
+    if item is None:
+        return jsonify({"ok": False}), 404
+    data = request.get_json(silent=True) or {}
+    style = data.get("overrides")
+    deco = data.get("decorations")
+    db.execute(
+        "UPDATE stamp_items SET style_json=?, decoration_json=? WHERE id=?",
+        (json.dumps(style, ensure_ascii=False) if style else None,
+         json.dumps(deco, ensure_ascii=False) if deco else None,
+         item["id"]),
+    )
+    _touch(db, set_id)
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/stamps/<int:set_id>/design_bulk", methods=["POST"])
+def design_bulk(set_id: int):
+    """Merge a set of design overrides into every item's style_json (JSON body)."""
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    overrides = data.get("overrides") or {}
+    template = data.get("template")
+    if not overrides and not template:
+        return jsonify({"ok": False, "error": "nothing to apply"}), 400
+
+    rows = db.execute("SELECT id, style_json FROM stamp_items WHERE set_id=?", (set_id,)).fetchall()
+    for r in rows:
+        cur = _json_or_none(r["style_json"]) or {}
+        cur.update({k: v for k, v in overrides.items() if v is not None})
+        db.execute("UPDATE stamp_items SET style_json=? WHERE id=?",
+                   (json.dumps(cur, ensure_ascii=False) if cur else None, r["id"]))
+    if template in TEMPLATES:
+        db.execute("UPDATE stamp_items SET item_template=? WHERE set_id=?", (template, set_id))
+    _touch(db, set_id)
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Design presets
+# ---------------------------------------------------------------------------
+
+@bp.route("/presets", methods=["POST"])
+def save_preset():
+    """Save a reusable design preset (JSON body: {name, overrides})."""
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    overrides = data.get("overrides") or {}
+    if not name:
+        return jsonify({"ok": False, "error": "name required"}), 400
+    cur = db.execute(
+        "INSERT INTO design_presets (name, style_json) VALUES (?, ?)",
+        (name, json.dumps(overrides, ensure_ascii=False)),
+    )
+    db.commit()
+    return jsonify({"ok": True, "id": cur.lastrowid})
+
+
+@bp.route("/presets")
+def list_presets():
+    db = get_db()
+    rows = db.execute("SELECT id, name, style_json FROM design_presets ORDER BY created_at DESC").fetchall()
+    return jsonify([{"id": r["id"], "name": r["name"],
+                     "overrides": _json_or_none(r["style_json"]) or {}} for r in rows])
+
+
+@bp.route("/presets/<int:preset_id>/delete", methods=["POST"])
+def delete_preset(preset_id: int):
+    db = get_db()
+    db.execute("DELETE FROM design_presets WHERE id=?", (preset_id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/stamps/<int:set_id>/apply_preset", methods=["POST"])
+def apply_preset(set_id: int):
+    """Apply a saved preset's overrides to every item in the set."""
+    db = get_db()
+    preset_id = request.form.get("preset_id", type=int)
+    preset = db.execute("SELECT style_json FROM design_presets WHERE id=?", (preset_id,)).fetchone()
+    if preset is None:
+        abort(404)
+    overrides = _json_or_none(preset["style_json"]) or {}
+    rows = db.execute("SELECT id, style_json FROM stamp_items WHERE set_id=?", (set_id,)).fetchall()
+    for r in rows:
+        cur = _json_or_none(r["style_json"]) or {}
+        cur.update(overrides)
+        db.execute("UPDATE stamp_items SET style_json=? WHERE id=?",
+                   (json.dumps(cur, ensure_ascii=False) if cur else None, r["id"]))
+    _touch(db, set_id)
+    db.commit()
+    return redirect(url_for("stamps.detail", set_id=set_id))
 
 
 @bp.route("/stamps/<int:set_id>/export")

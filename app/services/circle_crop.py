@@ -147,6 +147,7 @@ def add_circle_border(
     shadow_blur: int = 8,
     shadow_alpha: int = 70,
     border_color: tuple[int, int, int] = (255, 255, 255),
+    black_color: tuple[int, int, int] = (0, 0, 0),
 ) -> tuple[Image.Image, int]:
     """
     Add white (or colored) border + optional thin black ring + drop shadow
@@ -186,7 +187,7 @@ def add_circle_border(
         draw.ellipse(
             [ox + size // 2 - r_black, cx - r_black,
              ox + size // 2 + r_black - 1, cx + r_black - 1],
-            fill=(0, 0, 0, 255),
+            fill=(*black_color, 255),
         )
 
     # ── white (or tinted) border ────────────────────────────────────────────

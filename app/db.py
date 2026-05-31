@@ -39,7 +39,17 @@ CREATE TABLE IF NOT EXISTS stamp_items (
     preview_path  TEXT,
     warnings      TEXT,
     error_message TEXT,
+    style_json      TEXT,
+    decoration_json TEXT,
     UNIQUE(set_id, position)
+);
+
+-- Reusable design presets (font/colors/frame/decoration settings)
+CREATE TABLE IF NOT EXISTS design_presets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    style_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 """
 
@@ -63,6 +73,8 @@ _MIGRATIONS = [
     "ALTER TABLE stamp_items ADD COLUMN brightness REAL NOT NULL DEFAULT 0.0",
     "ALTER TABLE stamp_items ADD COLUMN warnings   TEXT",
     "ALTER TABLE stamp_sets  ADD COLUMN stamp_count INTEGER NOT NULL DEFAULT 8",
+    "ALTER TABLE stamp_items ADD COLUMN style_json      TEXT",
+    "ALTER TABLE stamp_items ADD COLUMN decoration_json TEXT",
 ]
 
 # Run after _MIGRATIONS to back-fill nullable columns
@@ -140,15 +152,17 @@ def _drop_position_check(db: sqlite3.Connection) -> None:
             preview_path  TEXT,
             warnings      TEXT,
             error_message TEXT,
+            style_json      TEXT,
+            decoration_json TEXT,
             UNIQUE(set_id, position)
         );
         INSERT INTO stamp_items
             (id, set_id, position, photo_path, caption, item_template, zoom,
              offset_x, offset_y, brightness, sticker_path, preview_path,
-             warnings, error_message)
+             warnings, error_message, style_json, decoration_json)
         SELECT id, set_id, position, photo_path, caption, item_template, zoom,
                offset_x, offset_y, brightness, sticker_path, preview_path,
-               warnings, error_message
+               warnings, error_message, style_json, decoration_json
         FROM _stamp_items_old;
         DROP TABLE _stamp_items_old;
         COMMIT;

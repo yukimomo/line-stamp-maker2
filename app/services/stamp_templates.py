@@ -75,12 +75,20 @@ def zoom_preset(template: str) -> dict[str, float]:
     return ZOOM_PRESETS.get(template, ZOOM_PRESETS["simple_circle"])
 
 
+# Frame overrides for the current render, consumed by _paste_circle.
+# Set/cleared by apply_template so all 11 templates honor them without
+# changing their individual signatures (keeps preview == output).
+_FRAME_OVERRIDE: dict | None = None
+
+
 def apply_template(
     circle_img: Image.Image,
     template: str,
     caption: str = "",
     text_style: str = "pop",
     seed: int | None = None,
+    overrides: dict | None = None,
+    decorations: list[dict] | None = None,
 ) -> Image.Image:
     """
     Render a complete LINE stamp image from a circular photo + template.
@@ -91,15 +99,41 @@ def apply_template(
         caption:     Text to write on the stamp.
         text_style:  Key from TEXT_STYLES.
         seed:        RNG seed for reproducible decoration placement.
+        overrides:   Optional design overrides (text + frame fields).
+        decorations: Optional list of decoration parts to draw on top.
+
+    The SAME function is used by both live preview and final generation, so
+    customized output always matches the preview.
     """
+    global _FRAME_OVERRIDE
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
 
     fn = _DISPATCH.get(template, _tmpl_simple_circle)
-    result = fn(circle_img, caption, text_style)
+    has_text_override = bool(overrides) and any(
+        k in overrides for k in ("text_color", "stroke_color", "stroke_width", "shadow",
+                                  "shadow_color", "font", "font_size", "text_pos",
+                                  "text_y", "align")
+    )
 
-    # Guarantee within LINE spec
+    _FRAME_OVERRIDE = overrides or None
+    try:
+        # If text is customized, render the template WITHOUT its built-in caption
+        # and draw the caption centrally so overrides apply on every template.
+        tmpl_caption = "" if has_text_override else caption
+        result = fn(circle_img, tmpl_caption, text_style)
+    finally:
+        _FRAME_OVERRIDE = None
+
+    # Decorations layer (on top of frame/background, below/over text as added)
+    if decorations:
+        result = _draw_decorations(result, decorations)
+
+    # Central caption when customized
+    if has_text_override and caption:
+        result = add_caption(result, caption, style=text_style, overrides=overrides)
+
     if result.width > 370 or result.height > 320:
         result.thumbnail((370, 320), Image.Resampling.LANCZOS)
     return result
@@ -186,13 +220,35 @@ def _paste_circle(
     border_color: tuple[int, int, int] = (255, 255, 255),
     cy_override: int | None = None,
 ) -> None:
-    """Add border+shadow to circle and paste at the standard position."""
+    """Add border+shadow to circle and paste at the standard position.
+
+    Honors _FRAME_OVERRIDE (frame_color/frame_width/outer_color/outer_width/
+    frame_shadow/shadow_strength) set by apply_template for the current render.
+    """
+    ov = _FRAME_OVERRIDE or {}
+    black_color = (0, 0, 0)
+    shadow_alpha = 70
+    if "frame_color" in ov and ov["frame_color"] is not None:
+        border_color = tuple(int(x) for x in ov["frame_color"])
+    if ov.get("frame_width") is not None:
+        white_px = max(0, int(ov["frame_width"]))
+    if ov.get("outer_width") is not None:
+        black_px = max(0, int(ov["outer_width"]))
+    if "outer_color" in ov and ov["outer_color"] is not None:
+        black_color = tuple(int(x) for x in ov["outer_color"])
+    if ov.get("frame_shadow") is not None:
+        shadow = bool(ov["frame_shadow"])
+    if ov.get("shadow_strength") is not None:
+        shadow_alpha = max(0, min(255, int(ov["shadow_strength"])))
+
     decorated, pad = add_circle_border(
         circle_img,
         white_px=white_px,
         black_px=black_px,
         shadow=shadow,
+        shadow_alpha=shadow_alpha,
         border_color=border_color,
+        black_color=black_color,
     )
     cy = cy_override if cy_override is not None else CIRCLE_CY
     dx = CIRCLE_CX - (decorated.width // 2)
@@ -302,6 +358,82 @@ def _confetti_rect(draw: ImageDraw.ImageDraw, x: float, y: float, w: float, h: f
         for p in pts
     ]
     draw.polygon(rotated, fill=color)
+
+
+# ---------------------------------------------------------------------------
+# Decoration parts (user-editable overlays)
+# ---------------------------------------------------------------------------
+
+# Available decoration types for the UI
+DECORATIONS: dict[str, str] = {
+    "heart":         "ハート",
+    "star":          "星",
+    "sparkle":       "キラキラ",
+    "speech_bubble": "吹き出し",
+    "ribbon":        "リボン",
+    "flower":        "花",
+}
+
+
+def _deco_speech_bubble(draw, cx, cy, size, color):
+    w = size * 1.6
+    h = size
+    draw.rounded_rectangle([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2],
+                           radius=size * 0.3, fill=color)
+    draw.polygon([(cx - size * 0.2, cy + h / 2), (cx + size * 0.2, cy + h / 2),
+                  (cx - size * 0.1, cy + h / 2 + size * 0.5)], fill=color)
+
+
+def _deco_ribbon(draw, cx, cy, size, color):
+    s = size
+    draw.polygon([(cx, cy), (cx - s, cy - s * 0.6), (cx - s, cy + s * 0.6)], fill=color)
+    draw.polygon([(cx, cy), (cx + s, cy - s * 0.6), (cx + s, cy + s * 0.6)], fill=color)
+    draw.ellipse([cx - s * 0.28, cy - s * 0.28, cx + s * 0.28, cy + s * 0.28], fill=color)
+
+
+def _draw_decorations(img: Image.Image, parts: list[dict]) -> Image.Image:
+    """
+    Draw user decoration parts on top of *img*.
+
+    Each part: {type, x, y (0..1), size (px), rotation (deg), color [r,g,b], visible}.
+    Rendered to a small layer then rotated, so rotation works for every shape.
+    """
+    W, H = img.size
+    base = img.convert("RGBA")
+    for part in parts:
+        if part.get("visible") is False:
+            continue
+        ptype = part.get("type")
+        if ptype not in DECORATIONS:
+            continue
+        size = float(part.get("size", 28))
+        rot = float(part.get("rotation", 0))
+        color = tuple(int(c) for c in part.get("color", [255, 90, 120]))[:3]
+        rgba = (*color, int(part.get("alpha", 230)))
+        cx = float(part.get("x", 0.5)) * W
+        cy = float(part.get("y", 0.5)) * H
+
+        box = int(size * 3) + 8
+        layer = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        lc = box / 2
+        if ptype == "heart":
+            _heart(d, lc, lc, size, rgba)
+        elif ptype == "star":
+            _star(d, lc, lc, size, size * 0.42, rgba, n=5)
+        elif ptype == "sparkle":
+            _sparkle(d, lc, lc, size, rgba)
+        elif ptype == "flower":
+            _draw_sakura(d, lc, lc, size, rgba)
+        elif ptype == "speech_bubble":
+            _deco_speech_bubble(d, lc, lc, size, rgba)
+        elif ptype == "ribbon":
+            _deco_ribbon(d, lc, lc, size, rgba)
+
+        if rot:
+            layer = layer.rotate(rot, resample=Image.BICUBIC, expand=False)
+        base.alpha_composite(layer, (int(cx - box / 2), int(cy - box / 2)))
+    return base
 
 
 # ---------------------------------------------------------------------------

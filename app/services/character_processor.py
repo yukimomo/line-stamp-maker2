@@ -63,6 +63,8 @@ class CharacterProcessor:
         caption: str = "",
         text_style: str = "pop",
         adjustments: Adjustments | None = None,
+        overrides: dict | None = None,
+        decorations: list[dict] | None = None,
     ) -> StepImages:
         adj = adjustments or Adjustments()
         original = img.convert("RGBA")
@@ -90,8 +92,10 @@ class CharacterProcessor:
             offset_y=adj.offset_y,
         )
 
-        # 4. Template decorations + text
-        stamp = apply_template(circle, self.template, caption, text_style, seed=0)
+        # 4. Template decorations + text (overrides flow through the same path
+        #    used by both preview and final generation → preview == output)
+        stamp = apply_template(circle, self.template, caption, text_style, seed=0,
+                               overrides=overrides, decorations=decorations)
 
         return StepImages(
             original=original,
