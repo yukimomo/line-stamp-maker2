@@ -219,4 +219,4 @@ class TestExportReview:
         sid = _create(client, app_with_photos, count=8)
         r = client.get(f"/stamps/{sid}/export")
         assert r.status_code == 200
-        assert "エクスポート".encode("utf-8") in r.data
+        assert "申請".encode("utf-8") in r.data

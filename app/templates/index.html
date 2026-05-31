@@ -33,6 +33,14 @@
             {{ THEMES[s['theme']].icon if s['theme'] in THEMES else '' }}
             {{ THEMES[s['theme']].label if s['theme'] in THEMES else s['theme'] }}
           </span>
+          {% set sl = {'editing':'編集中','unchecked':'チェック未','needs_fix':'要修正','ready':'申請OK','exported':'出力済み'} %}
+          <span class="badge
+            {% if s['submit_status']=='ready' %}bg-success
+            {% elif s['submit_status']=='exported' %}bg-primary
+            {% elif s['submit_status']=='needs_fix' %}bg-danger
+            {% else %}bg-secondary{% endif %}">
+            {{ sl.get(s['submit_status'], s['submit_status']) }}
+          </span>
         </p>
         <p class="card-text text-muted small"><i class="bi bi-clock me-1"></i>更新 {{ s['updated_at'] }}</p>
       </div>
