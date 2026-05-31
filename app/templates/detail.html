@@ -2,7 +2,8 @@
 {% block title %}{{ stamp_set['name'] }} - セットプレビュー{% endblock %}
 {% set tmpl_icons = {
   'simple_circle':'⭕','pop_star':'⭐','heart':'❤️','speech_bubble':'💬',
-  'birthday':'🎂','seasonal_sakura':'🌸','cool_badge':'🏅' } %}
+  'birthday':'🎂','seasonal_sakura':'🌸','cool_badge':'🏅',
+  'group_badge':'👥','action_pop':'💥','bright_frame':'🔆','soft_pastel':'🎨' } %}
 {% block content %}
 
 <div class="mb-3">
@@ -36,6 +37,50 @@
         {{ {'draft':'下書き','generated':'生成済み','partial':'一部生成',
             'error':'エラー','generating':'生成中'}.get(stamp_set['status'], stamp_set['status']) }}
       </span>
+    </div>
+  </div>
+</div>
+
+<!-- スタンプ数 & 一括編集 -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-6">
+        <form method="post" action="{{ url_for('stamps.change_count', set_id=stamp_set['id']) }}"
+              class="d-flex align-items-end gap-2">
+          <div>
+            <label class="form-label fw-semibold small mb-1"><i class="bi bi-collection me-1"></i>スタンプ数</label>
+            <select class="form-select form-select-sm" name="stamp_count" style="width:auto">
+              {% for c in ALLOWED_COUNTS %}
+              <option value="{{ c }}" {% if c == stamp_set['stamp_count'] %}selected{% endif %}>{{ c }}個</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-sm btn-outline-primary"
+                  onclick="return confirm('枚数を変更すると未生成状態になります。続けますか？')">変更</button>
+          <span class="text-muted small">増やすと写真を繰り返して追加します</span>
+        </form>
+      </div>
+      <div class="col-md-6">
+        <form method="post" action="{{ url_for('stamps.bulk_edit', set_id=stamp_set['id']) }}"
+              class="d-flex align-items-end gap-2 flex-wrap">
+          <div>
+            <label class="form-label fw-semibold small mb-1"><i class="bi bi-list-check me-1"></i>一括: 文字スタイル</label>
+            <select class="form-select form-select-sm" name="bulk_text_style" style="width:auto">
+              <option value="">変更しない</option>
+              {% for key, label in TEXT_STYLES.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label fw-semibold small mb-1">一括: テンプレート</label>
+            <select class="form-select form-select-sm" name="bulk_template" style="width:auto">
+              <option value="">変更しない</option>
+              {% for key, label in TEMPLATES.items() %}<option value="{{ key }}">{{ tmpl_icons.get(key,'') }} {{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary">全体に適用</button>
+        </form>
+      </div>
     </div>
   </div>
 </div>
@@ -91,7 +136,10 @@
   <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-        <h5 class="card-title mb-0"><i class="bi bi-grid-3x3-gap me-2"></i>セット全体プレビュー（8枚）</h5>
+        <h5 class="card-title mb-0">
+          <i class="bi bi-grid-3x3-gap me-2"></i>セット全体プレビュー（{{ items|length }}枚）
+          <small class="text-muted fw-normal" style="font-size:.72rem">ドラッグで並び替え</small>
+        </h5>
         <div class="d-flex align-items-center gap-2">
           <label class="small text-muted mb-0">文字スタイル</label>
           <select class="form-select form-select-sm" name="text_style" style="width:auto">
@@ -104,7 +152,8 @@
 
       <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3" id="slot-grid">
         {% for item in items %}
-        <div class="col slot-col" data-position="{{ item['position'] }}">
+        <div class="col slot-col" data-position="{{ item['position'] }}"
+             data-photo="{{ item['photo_path'] | photourl }}">
           <div class="card h-100 border
             {% if item['error_message'] %}border-danger
             {% elif item['sticker_path'] %}border-success
@@ -112,37 +161,35 @@
             <div class="card-body p-2">
 
               <div class="d-flex justify-content-between align-items-center mb-1">
-                <span class="badge bg-secondary">{{ item['position'] }}</span>
+                <span class="badge bg-secondary drag-handle" style="cursor:grab" title="ドラッグで並び替え">
+                  <i class="bi bi-grip-vertical"></i> {{ item['position'] }}
+                </span>
                 <span class="d-flex gap-1">
-                  <button type="button" class="btn btn-sm btn-light p-0 px-1 reorder-btn"
-                          data-dir="up" title="左へ">
-                    <i class="bi bi-arrow-left"></i>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 regen-btn"
+                          data-position="{{ item['position'] }}" data-mode="template" title="テンプレ変更で再生成">
+                    <i class="bi bi-shuffle"></i>
                   </button>
-                  <button type="button" class="btn btn-sm btn-light p-0 px-1 reorder-btn"
-                          data-dir="down" title="右へ">
-                    <i class="bi bi-arrow-right"></i>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 regen-btn"
+                          data-position="{{ item['position'] }}" data-mode="caption" title="セリフ再提案">
+                    <i class="bi bi-chat-dots"></i>
+                  </button>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 dup-btn"
+                          data-position="{{ item['position'] }}" title="複製">
+                    <i class="bi bi-files"></i>
+                  </button>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 text-danger del-btn"
+                          data-position="{{ item['position'] }}" title="削除">
+                    <i class="bi bi-trash"></i>
                   </button>
                 </span>
               </div>
 
-              <!-- 画像表示 -->
+              <!-- 画像表示（リアルタイムプレビュー対象） -->
               <div class="position-relative">
-                {% if item['sticker_path'] %}
-                  <img src="{{ item['sticker_path'] | photourl }}"
-                       class="w-100 mb-1"
-                       style="height:120px;object-fit:contain;background:#f8f9fa;border-radius:6px"
-                       alt="スタンプ {{ item['position'] }}">
-                {% else %}
-                  <div class="w-100 mb-1 d-flex align-items-center justify-content-center bg-light rounded"
-                       style="height:120px;overflow:hidden">
-                    {% if item['error_message'] %}
-                      <i class="bi bi-x-circle fs-2 text-danger"></i>
-                    {% else %}
-                      <img src="{{ item['photo_path'] | photourl }}"
-                           style="max-width:100%;max-height:100%;object-fit:contain">
-                    {% endif %}
-                  </div>
-                {% endif %}
+                <img class="w-100 mb-1 slot-img"
+                     src="{{ (item['sticker_path'] | photourl) if item['sticker_path'] else (item['photo_path'] | photourl) }}"
+                     style="height:120px;object-fit:contain;background:#f8f9fa;border-radius:6px"
+                     alt="スタンプ {{ item['position'] }}">
                 <button type="button"
                         class="btn btn-sm btn-light position-absolute top-0 end-0 m-1 swap-btn"
                         data-position="{{ item['position'] }}" title="写真を差し替え">
@@ -248,8 +295,8 @@
       </form>
 
       {% if stamp_set['zip_path'] %}
-      <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-primary btn-lg">
-        <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード
+      <a href="{{ url_for('stamps.export_review', set_id=stamp_set['id']) }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-box-arrow-up me-1"></i>エクスポート確認
       </a>
       {% endif %}
 
@@ -302,8 +349,20 @@
 
 {% endblock %}
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
 const SET_ID = {{ stamp_set['id'] }};
+
+function postForm(url, confirmMsg) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  const f = document.createElement('form');
+  f.method = 'POST'; f.action = url;
+  document.body.appendChild(f); f.submit();
+}
+
+function postJson(url, body) {
+  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+}
 
 // ── generate spinner ──
 document.getElementById('generate-form').addEventListener('submit', function () {
@@ -313,23 +372,77 @@ document.getElementById('generate-form').addEventListener('submit', function () 
   document.getElementById('loading-overlay').style.display = 'flex';
 });
 
-// ── reorder (arrows) ──
-document.querySelectorAll('.reorder-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const col = btn.closest('.slot-col');
-    const pos = parseInt(col.dataset.position);
-    const order = [...document.querySelectorAll('.slot-col')].map(c => parseInt(c.dataset.position));
-    const idx = order.indexOf(pos);
-    const swapWith = btn.dataset.dir === 'up' ? idx - 1 : idx + 1;
-    if (swapWith < 0 || swapWith >= order.length) return;
-    [order[idx], order[swapWith]] = [order[swapWith], order[idx]];
-    fetch(`/stamps/${SET_ID}/reorder`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({order})
-    }).then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+// ── drag & drop reorder (SortableJS) ──
+const grid = document.getElementById('slot-grid');
+if (window.Sortable) {
+  new Sortable(grid, {
+    handle: '.drag-handle', animation: 150,
+    onEnd: function () {
+      const order = [...grid.querySelectorAll('.slot-col')].map(c => parseInt(c.dataset.position));
+      postJson(`/stamps/${SET_ID}/reorder`, {order}).then(r => r.json())
+        .then(d => { if (d.ok) location.reload(); });
+    }
+  });
+}
+
+// ── per-item: regenerate / duplicate / delete ──
+document.querySelectorAll('.regen-btn').forEach(b => b.addEventListener('click', () => {
+  const f = document.createElement('form');
+  f.method = 'POST';
+  f.action = `/stamps/${SET_ID}/item/${b.dataset.position}/regenerate`;
+  const inp = document.createElement('input');
+  inp.name = 'mode'; inp.value = b.dataset.mode;
+  f.appendChild(inp); document.body.appendChild(f); f.submit();
+}));
+document.querySelectorAll('.dup-btn').forEach(b => b.addEventListener('click', () =>
+  fetch(`/stamps/${SET_ID}/item/${b.dataset.position}/duplicate`, {method:'POST'})
+    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); })
+));
+document.querySelectorAll('.del-btn').forEach(b => b.addEventListener('click', () => {
+  if (!confirm('このスタンプを削除しますか？')) return;
+  fetch(`/stamps/${SET_ID}/item/${b.dataset.position}/delete`, {method:'POST'})
+    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); });
+}));
+
+// ── realtime preview: re-render slot image when its controls change ──
+const textStyleSel = document.querySelector('select[name="text_style"]');
+function refreshPreview(col) {
+  const pos = col.dataset.position;
+  const photo = col.dataset.photo;  // /photo?path=... URL
+  const m = photo.match(/[?&]path=([^&]+)/);
+  if (!m) return;
+  const img = col.querySelector('.slot-img');
+  const params = new URLSearchParams({
+    photo: decodeURIComponent(m[1]),
+    caption: col.querySelector('.caption-input').value,
+    template: col.querySelector('select[name^="template_"]').value,
+    text_style: textStyleSel ? textStyleSel.value : 'bubble',
+    zoom: col.querySelector('input[name^="zoom_"]').value,
+    offset_x: col.querySelector('input[name^="offset_x_"]').value,
+    offset_y: col.querySelector('input[name^="offset_y_"]').value,
+    brightness: col.querySelector('input[name^="brightness_"]').value,
+  });
+  img.style.opacity = '0.5';
+  img.src = `/stamps/${SET_ID}/preview?` + params.toString();
+  img.onload = img.onerror = () => { img.style.opacity = '1'; };
+}
+
+let previewTimer = null;
+function schedulePreview(col) {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => refreshPreview(col), 350);
+}
+
+document.querySelectorAll('.slot-col').forEach(col => {
+  col.querySelectorAll('input, select').forEach(ctrl => {
+    const ev = ctrl.tagName === 'SELECT' ? 'change' : 'input';
+    ctrl.addEventListener(ev, () => schedulePreview(col));
   });
 });
+if (textStyleSel) {
+  textStyleSel.addEventListener('change', () =>
+    document.querySelectorAll('.slot-col').forEach(refreshPreview));
+}
 
 // ── photo swap ──
 let swapPosition = null, allPhotos = [];
