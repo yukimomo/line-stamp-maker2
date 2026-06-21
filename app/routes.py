@@ -5,7 +5,7 @@ from io import BytesIO
 from pathlib import Path
 
 from flask import (
-    Blueprint, abort, current_app, jsonify, redirect,
+    Blueprint, abort, current_app, flash, jsonify, redirect,
     render_template, request, send_file, url_for,
 )
 
@@ -21,6 +21,8 @@ from .services.stamp_themes import THEMES, assign_captions_to_photos
 from .services.text_styles import TEXT_STYLES
 from .services.metadata import META_FIELDS, LINE_CATEGORIES, default_metadata, suggest_metadata
 from .services.review import run_review
+from .services.ai_finish import VARIANTS as AI_FINISH_VARIANTS, finish_icon_with_ai
+from .services.chatgpt_ready import prepare_chatgpt_ready, open_folder
 from .services.design_presets import (
     BUILTIN_PRESETS, preset_overrides, preset_decorations, preset_main_bg,
 )
@@ -70,6 +72,35 @@ def _touch(db, set_id: int) -> None:
         "UPDATE stamp_sets SET updated_at = datetime('now','localtime') WHERE id = ?",
         (set_id,),
     )
+
+
+def _ai_finish_outputs(stamp_set) -> list[dict[str, str]]:
+    output_dir = stamp_set["output_dir"] if stamp_set and stamp_set["output_dir"] else ""
+    if not output_dir:
+        return []
+    base = Path(output_dir) / "ai_finish"
+    outputs: list[dict[str, str]] = []
+    for key, label in AI_FINISH_VARIANTS.items():
+        path = base / f"{key}.png"
+        if path.exists():
+            outputs.append({"key": key, "label": label, "path": str(path)})
+    return outputs
+
+
+def _chatgpt_ready_info() -> dict:
+    base = Path(current_app.config["OUTPUT_DIR"]) / "chatgpt-ready"
+    prompt_path = base / "prompt.txt"
+    files = []
+    for key in ("natural", "storybook", "premium"):
+        path = base / f"icon_{key}_source.png"
+        if path.exists():
+            files.append({"key": key, "path": str(path)})
+    return {
+        "output_dir": str(base),
+        "prompt_path": str(prompt_path) if prompt_path.exists() else "",
+        "files": files,
+        "exists": bool(files) or prompt_path.exists(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +257,8 @@ def detail(set_id: int):
         DECORATIONS=DECORATIONS,
         BUILTIN_PRESETS=BUILTIN_PRESETS,
         caption_templates=CAPTION_TEMPLATES,
+        ai_finish_outputs=_ai_finish_outputs(stamp_set),
+        chatgpt_ready=_chatgpt_ready_info(),
     )
 
 
@@ -395,6 +428,69 @@ def generate(set_id: int):
     )
     _touch(db, set_id)
     db.commit()
+    return redirect(url_for("stamps.detail", set_id=set_id))
+
+
+@bp.route("/stamps/<int:set_id>/ai_finish", methods=["POST"])
+def ai_finish(set_id: int):
+    db = get_db()
+    stamp_set = db.execute("SELECT * FROM stamp_sets WHERE id = ?", (set_id,)).fetchone()
+    if stamp_set is None:
+        abort(404)
+    if stamp_set["status"] not in ("generated", "partial") or not stamp_set["output_dir"]:
+        flash("AI仕上げは、アイコン生成後に実行できます。", "warning")
+        return redirect(url_for("stamps.detail", set_id=set_id))
+
+    output_dir = Path(stamp_set["output_dir"])
+    input_path = output_dir / "main.png"
+    try:
+        results = finish_icon_with_ai(input_path, output_dir / "ai_finish")
+    except Exception as exc:
+        flash(f"AI仕上げに失敗しました: {exc}", "danger")
+    else:
+        flash(f"AI仕上げが完了しました（{len(results)}パターン）。", "success")
+
+    _touch(db, set_id)
+    db.commit()
+    return redirect(url_for("stamps.detail", set_id=set_id))
+
+
+@bp.route("/stamps/<int:set_id>/chatgpt_ready", methods=["POST"])
+def chatgpt_ready(set_id: int):
+    db = get_db()
+    stamp_set = db.execute("SELECT * FROM stamp_sets WHERE id = ?", (set_id,)).fetchone()
+    if stamp_set is None:
+        abort(404)
+    if stamp_set["status"] not in ("generated", "partial") or not stamp_set["output_dir"]:
+        flash("ChatGPT仕上げ用の出力は、アイコン生成後に実行できます。", "warning")
+        return redirect(url_for("stamps.detail", set_id=set_id))
+
+    try:
+        result = prepare_chatgpt_ready(
+            Path(stamp_set["output_dir"]) / "main.png",
+            Path(current_app.config["OUTPUT_DIR"]),
+        )
+    except Exception as exc:
+        flash(f"ChatGPT仕上げ用の出力に失敗しました: {exc}", "danger")
+    else:
+        clip = "プロンプトもクリップボードにコピーしました。" if result.clipboard_copied else "プロンプトは prompt.txt に保存しました。"
+        flash(f"ChatGPT仕上げ用ファイルを出力しました。{clip}", "success")
+
+    _touch(db, set_id)
+    db.commit()
+    return redirect(url_for("stamps.detail", set_id=set_id))
+
+
+@bp.route("/stamps/<int:set_id>/chatgpt_ready/open", methods=["POST"])
+def open_chatgpt_ready(set_id: int):
+    db = get_db()
+    stamp_set = db.execute("SELECT id FROM stamp_sets WHERE id = ?", (set_id,)).fetchone()
+    if stamp_set is None:
+        abort(404)
+    try:
+        open_folder(Path(current_app.config["OUTPUT_DIR"]) / "chatgpt-ready")
+    except Exception as exc:
+        flash(f"出力フォルダを開けませんでした: {exc}", "danger")
     return redirect(url_for("stamps.detail", set_id=set_id))
 
 

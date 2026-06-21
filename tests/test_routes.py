@@ -173,3 +173,114 @@ class TestNewPageRendersThemes:
         html = r.data.decode("utf-8")
         for theme in ("family_pop", "business_casual", "celebration"):
             assert theme in html
+
+
+class TestAiFinishRoute:
+    def _make_generated_set(self, client, app):
+        _create_set(client, app._photo_paths)
+        with app.app_context():
+            from app.db import get_db
+            db = get_db()
+            set_id = db.execute("SELECT id FROM stamp_sets").fetchone()["id"]
+            out = Path(app.config["OUTPUT_DIR"]) / f"set_{set_id:04d}"
+            out.mkdir(parents=True)
+            Image.new("RGBA", (240, 240), (120, 160, 200, 255)).save(out / "main.png", "PNG")
+            db.execute(
+                "UPDATE stamp_sets SET status='generated', output_dir=? WHERE id=?",
+                (str(out), set_id),
+            )
+            db.commit()
+        return set_id, out
+
+    def test_ai_finish_uses_generated_main_png(self, client, app_with_photos, monkeypatch):
+        set_id, out = self._make_generated_set(client, app_with_photos)
+        called = {}
+
+        def fake_finish(input_path, output_dir):
+            called["input_path"] = input_path
+            called["output_dir"] = output_dir
+            output_dir.mkdir(parents=True)
+            for name in ("natural", "storybook", "premium"):
+                Image.new("RGBA", (1024, 1024), (255, 255, 255, 255)).save(output_dir / f"{name}.png", "PNG")
+            return []
+
+        import app.routes as routes
+        monkeypatch.setattr(routes, "finish_icon_with_ai", fake_finish)
+
+        r = client.post(f"/stamps/{set_id}/ai_finish", follow_redirects=True)
+
+        assert r.status_code == 200
+        assert called["input_path"] == out / "main.png"
+        assert called["output_dir"] == out / "ai_finish"
+        assert (out / "ai_finish" / "natural.png").exists()
+        assert "AI仕上げ".encode("utf-8") in r.data
+
+    def test_ai_finish_requires_generated_icon(self, client, app_with_photos):
+        _create_set(client, app_with_photos._photo_paths)
+        with app_with_photos.app_context():
+            from app.db import get_db
+            set_id = get_db().execute("SELECT id FROM stamp_sets").fetchone()["id"]
+
+        r = client.post(f"/stamps/{set_id}/ai_finish", follow_redirects=True)
+
+        assert r.status_code == 200
+        assert "アイコン生成後".encode("utf-8") in r.data
+class TestChatGptReadyRoute:
+    def _make_generated_set(self, client, app):
+        _create_set(client, app._photo_paths)
+        with app.app_context():
+            from app.db import get_db
+            db = get_db()
+            set_id = db.execute("SELECT id FROM stamp_sets").fetchone()["id"]
+            out = Path(app.config["OUTPUT_DIR"]) / f"set_{set_id:04d}"
+            out.mkdir(parents=True)
+            Image.new("RGBA", (240, 240), (120, 160, 200, 255)).save(out / "main.png", "PNG")
+            db.execute(
+                "UPDATE stamp_sets SET status='generated', output_dir=? WHERE id=?",
+                (str(out), set_id),
+            )
+            db.commit()
+        return set_id, out
+
+    def test_chatgpt_ready_exports_generated_main_png(self, client, app_with_photos, monkeypatch):
+        self._make_generated_set(client, app_with_photos)
+        monkeypatch.setattr("app.services.chatgpt_ready.copy_prompt_to_clipboard", lambda prompt: True)
+        with app_with_photos.app_context():
+            from app.db import get_db
+            set_id = get_db().execute("SELECT id FROM stamp_sets").fetchone()["id"]
+
+        r = client.post(f"/stamps/{set_id}/chatgpt_ready", follow_redirects=True)
+
+        ready = Path(app_with_photos.config["OUTPUT_DIR"]) / "chatgpt-ready"
+        assert r.status_code == 200
+        assert (ready / "icon_natural_source.png").exists()
+        assert (ready / "icon_storybook_source.png").exists()
+        assert (ready / "icon_premium_source.png").exists()
+        assert "3. premium" in (ready / "prompt.txt").read_text(encoding="utf-8")
+        assert Image.open(ready / "icon_natural_source.png").size == (240, 240)
+
+    def test_chatgpt_ready_requires_generated_icon(self, client, app_with_photos):
+        _create_set(client, app_with_photos._photo_paths)
+        with app_with_photos.app_context():
+            from app.db import get_db
+            set_id = get_db().execute("SELECT id FROM stamp_sets").fetchone()["id"]
+
+        r = client.post(f"/stamps/{set_id}/chatgpt_ready", follow_redirects=True)
+
+        assert r.status_code == 200
+        assert "ChatGPT".encode("utf-8") in r.data
+
+    def test_open_chatgpt_ready_opens_output_folder(self, client, app_with_photos, monkeypatch):
+        set_id, _ = self._make_generated_set(client, app_with_photos)
+        called = {}
+
+        def fake_open(path):
+            called["path"] = path
+
+        import app.routes as routes
+        monkeypatch.setattr(routes, "open_folder", fake_open)
+
+        r = client.post(f"/stamps/{set_id}/chatgpt_ready/open")
+
+        assert r.status_code == 302
+        assert called["path"] == Path(app_with_photos.config["OUTPUT_DIR"]) / "chatgpt-ready"
