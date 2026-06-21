@@ -47,7 +47,38 @@ TEMPLATES: dict[str, str] = {
     "birthday":        "バースデー（カラフル・お祝い）",
     "seasonal_sakura": "桜（和風・春モチーフ）",
     "cool_badge":      "バッジ（スタイリッシュ）",
+    "group_badge":     "グループ（複数人・横長）",
+    "action_pop":      "アクション（効果線・躍動感）",
+    "bright_frame":    "ブライト（暗め写真向け・明るい枠）",
+    "soft_pastel":     "ソフトパステル（やわらか・家族向け）",
 }
+
+# Per-template framing hints for face-centered cropping.
+#   target_face_frac: desired face height as fraction of crop side (bigger=closer)
+#   zoom:             default zoom multiplier
+ZOOM_PRESETS: dict[str, dict[str, float]] = {
+    "simple_circle":   {"target_face_frac": 0.45, "zoom": 1.0},
+    "pop_star":        {"target_face_frac": 0.50, "zoom": 1.0},
+    "heart":           {"target_face_frac": 0.48, "zoom": 1.0},
+    "speech_bubble":   {"target_face_frac": 0.38, "zoom": 1.0},   # leave room for bubble
+    "birthday":        {"target_face_frac": 0.44, "zoom": 1.0},
+    "seasonal_sakura": {"target_face_frac": 0.44, "zoom": 1.0},
+    "cool_badge":      {"target_face_frac": 0.46, "zoom": 1.0},
+    "group_badge":     {"target_face_frac": 0.30, "zoom": 0.85},   # wide, fit everyone
+    "action_pop":      {"target_face_frac": 0.50, "zoom": 1.05},
+    "bright_frame":    {"target_face_frac": 0.46, "zoom": 1.0},
+    "soft_pastel":     {"target_face_frac": 0.44, "zoom": 1.0},
+}
+
+
+def zoom_preset(template: str) -> dict[str, float]:
+    return ZOOM_PRESETS.get(template, ZOOM_PRESETS["simple_circle"])
+
+
+# Frame overrides for the current render, consumed by _paste_circle.
+# Set/cleared by apply_template so all 11 templates honor them without
+# changing their individual signatures (keeps preview == output).
+_FRAME_OVERRIDE: dict | None = None
 
 
 def apply_template(
@@ -56,6 +87,8 @@ def apply_template(
     caption: str = "",
     text_style: str = "pop",
     seed: int | None = None,
+    overrides: dict | None = None,
+    decorations: list[dict] | None = None,
 ) -> Image.Image:
     """
     Render a complete LINE stamp image from a circular photo + template.
@@ -66,44 +99,113 @@ def apply_template(
         caption:     Text to write on the stamp.
         text_style:  Key from TEXT_STYLES.
         seed:        RNG seed for reproducible decoration placement.
+        overrides:   Optional design overrides (text + frame fields).
+        decorations: Optional list of decoration parts to draw on top.
+
+    The SAME function is used by both live preview and final generation, so
+    customized output always matches the preview.
     """
+    global _FRAME_OVERRIDE, _BG_OVERRIDE
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
 
     fn = _DISPATCH.get(template, _tmpl_simple_circle)
-    result = fn(circle_img, caption, text_style)
+    has_text_override = bool(overrides) and any(
+        k in overrides for k in ("text_color", "stroke_color", "stroke_width", "shadow",
+                                  "shadow_color", "font", "font_size", "text_pos",
+                                  "text_y", "align")
+    )
 
-    # Guarantee within LINE spec
+    _FRAME_OVERRIDE = overrides or None
+    # Background-color override (consumed by _canvas)
+    if overrides and overrides.get("bg_color") is not None:
+        _BG_OVERRIDE = {"color": overrides["bg_color"],
+                        "gradient": bool(overrides.get("bg_gradient"))}
+    else:
+        _BG_OVERRIDE = None
+    try:
+        # If text is customized, render the template WITHOUT its built-in caption
+        # and draw the caption centrally so overrides apply on every template.
+        tmpl_caption = "" if has_text_override else caption
+        result = fn(circle_img, tmpl_caption, text_style)
+    finally:
+        _FRAME_OVERRIDE = None
+        _BG_OVERRIDE = None
+
+    # Decorations layer (on top of frame/background, below/over text as added)
+    if decorations:
+        result = _draw_decorations(result, decorations)
+
+    # Central caption when customized
+    if has_text_override and caption:
+        result = add_caption(result, caption, style=text_style, overrides=overrides)
+
     if result.width > 370 or result.height > 320:
         result.thumbnail((370, 320), Image.Resampling.LANCZOS)
     return result
 
 
-def auto_select_template(photo_metadata: dict | None = None) -> str:
-    """Heuristic template selection from photo-selector analysis metadata."""
-    if not photo_metadata:
-        return "simple_circle"
+def auto_select_template(
+    photo_metadata: dict | None = None,
+    face_count: int | None = None,
+    is_dark: bool | None = None,
+) -> str:
+    """
+    Heuristic template selection from analysis metadata + optional signals.
 
-    analysis = photo_metadata.get("analysis") or {}
+    Args:
+        photo_metadata: photo dict with "analysis" {tags, caption, risks}.
+        face_count:     number of detected faces (from face_detect), if known.
+        is_dark:        whether the photo is dark (from risks or measurement).
+
+    Priority:
+        dark photo        → bright_frame
+        multiple people   → group_badge
+        movement/action   → action_pop
+        birthday/お祝い    → birthday
+        桜/spring          → seasonal_sakura
+        smile/happy/cute  → pop_star / heart
+        calm/quiet        → simple_circle / cool_badge / soft_pastel
+    """
+    analysis = (photo_metadata or {}).get("analysis") or {}
     tags = {t.lower() for t in analysis.get("tags", [])}
-    caption = analysis.get("caption", "").lower()
+    caption = (analysis.get("caption") or "").lower()
+    risks = analysis.get("risks") or {}
 
     def _match(words: set[str]) -> bool:
-        """True if any word is in tags OR appears as a substring of caption."""
         return bool(tags & words) or any(w in caption for w in words)
 
+    # ── dark / backlit ──
+    dark = is_dark if is_dark is not None else bool(risks.get("dark"))
+    if dark:
+        return "bright_frame"
+
+    # ── multiple people ──
+    multi = (face_count is not None and face_count >= 2) or _match(
+        {"group", "family", "friends", "multiple", "people", "crowd", "家族", "集合"}
+    )
+    if multi:
+        return "group_badge"
+
+    # ── movement / action ──
+    if _match({"movement", "running", "jump", "action", "sport", "play", "dance",
+               "走", "ジャンプ", "動き"}):
+        return "action_pop"
+
+    # ── events ──
     if _match({"birthday", "cake", "party", "celebrate", "誕生", "お祝い"}):
         return "birthday"
-
     if _match({"sakura", "cherry", "blossom", "spring", "桜", "春"}):
         return "seasonal_sakura"
 
-    if _match({"smile", "happy", "cute", "love", "heart", "笑顔"}):
+    # ── mood ──
+    if _match({"smile", "happy", "cute", "love", "heart", "fun", "笑顔", "楽し"}):
         return random.choice(["pop_star", "heart"])
-
-    if _match({"group", "family", "friends", "multiple", "家族"}):
-        return "simple_circle"
+    if _match({"baby", "child", "kid", "soft", "gentle", "赤ちゃん", "子ども", "家族"}):
+        return "soft_pastel"
+    if _match({"calm", "cool", "serious", "quiet", "落ち着"}):
+        return random.choice(["simple_circle", "cool_badge"])
 
     return "simple_circle"
 
@@ -112,7 +214,20 @@ def auto_select_template(photo_metadata: dict | None = None) -> str:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+# Background-color override for the current render (set by apply_template).
+_BG_OVERRIDE: dict | None = None
+
+
 def _canvas() -> Image.Image:
+    """Fresh canvas. Honors _BG_OVERRIDE (preset background color/gradient)."""
+    ov = _BG_OVERRIDE
+    if ov and ov.get("color") is not None:
+        rgb = tuple(int(x) for x in ov["color"])[:3]
+        if ov.get("gradient"):
+            top = (*rgb, 255)
+            bot = tuple(max(0, c - 40) for c in rgb) + (255,)
+            return _gradient_v((CANVAS_W, CANVAS_H), top, bot)
+        return Image.new("RGBA", (CANVAS_W, CANVAS_H), (*rgb, 255))
     return Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
 
 
@@ -125,13 +240,35 @@ def _paste_circle(
     border_color: tuple[int, int, int] = (255, 255, 255),
     cy_override: int | None = None,
 ) -> None:
-    """Add border+shadow to circle and paste at the standard position."""
+    """Add border+shadow to circle and paste at the standard position.
+
+    Honors _FRAME_OVERRIDE (frame_color/frame_width/outer_color/outer_width/
+    frame_shadow/shadow_strength) set by apply_template for the current render.
+    """
+    ov = _FRAME_OVERRIDE or {}
+    black_color = (0, 0, 0)
+    shadow_alpha = 70
+    if "frame_color" in ov and ov["frame_color"] is not None:
+        border_color = tuple(int(x) for x in ov["frame_color"])
+    if ov.get("frame_width") is not None:
+        white_px = max(0, int(ov["frame_width"]))
+    if ov.get("outer_width") is not None:
+        black_px = max(0, int(ov["outer_width"]))
+    if "outer_color" in ov and ov["outer_color"] is not None:
+        black_color = tuple(int(x) for x in ov["outer_color"])
+    if ov.get("frame_shadow") is not None:
+        shadow = bool(ov["frame_shadow"])
+    if ov.get("shadow_strength") is not None:
+        shadow_alpha = max(0, min(255, int(ov["shadow_strength"])))
+
     decorated, pad = add_circle_border(
         circle_img,
         white_px=white_px,
         black_px=black_px,
         shadow=shadow,
+        shadow_alpha=shadow_alpha,
         border_color=border_color,
+        black_color=black_color,
     )
     cy = cy_override if cy_override is not None else CIRCLE_CY
     dx = CIRCLE_CX - (decorated.width // 2)
@@ -241,6 +378,82 @@ def _confetti_rect(draw: ImageDraw.ImageDraw, x: float, y: float, w: float, h: f
         for p in pts
     ]
     draw.polygon(rotated, fill=color)
+
+
+# ---------------------------------------------------------------------------
+# Decoration parts (user-editable overlays)
+# ---------------------------------------------------------------------------
+
+# Available decoration types for the UI
+DECORATIONS: dict[str, str] = {
+    "heart":         "ハート",
+    "star":          "星",
+    "sparkle":       "キラキラ",
+    "speech_bubble": "吹き出し",
+    "ribbon":        "リボン",
+    "flower":        "花",
+}
+
+
+def _deco_speech_bubble(draw, cx, cy, size, color):
+    w = size * 1.6
+    h = size
+    draw.rounded_rectangle([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2],
+                           radius=size * 0.3, fill=color)
+    draw.polygon([(cx - size * 0.2, cy + h / 2), (cx + size * 0.2, cy + h / 2),
+                  (cx - size * 0.1, cy + h / 2 + size * 0.5)], fill=color)
+
+
+def _deco_ribbon(draw, cx, cy, size, color):
+    s = size
+    draw.polygon([(cx, cy), (cx - s, cy - s * 0.6), (cx - s, cy + s * 0.6)], fill=color)
+    draw.polygon([(cx, cy), (cx + s, cy - s * 0.6), (cx + s, cy + s * 0.6)], fill=color)
+    draw.ellipse([cx - s * 0.28, cy - s * 0.28, cx + s * 0.28, cy + s * 0.28], fill=color)
+
+
+def _draw_decorations(img: Image.Image, parts: list[dict]) -> Image.Image:
+    """
+    Draw user decoration parts on top of *img*.
+
+    Each part: {type, x, y (0..1), size (px), rotation (deg), color [r,g,b], visible}.
+    Rendered to a small layer then rotated, so rotation works for every shape.
+    """
+    W, H = img.size
+    base = img.convert("RGBA")
+    for part in parts:
+        if part.get("visible") is False:
+            continue
+        ptype = part.get("type")
+        if ptype not in DECORATIONS:
+            continue
+        size = float(part.get("size", 28))
+        rot = float(part.get("rotation", 0))
+        color = tuple(int(c) for c in part.get("color", [255, 90, 120]))[:3]
+        rgba = (*color, int(part.get("alpha", 230)))
+        cx = float(part.get("x", 0.5)) * W
+        cy = float(part.get("y", 0.5)) * H
+
+        box = int(size * 3) + 8
+        layer = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        lc = box / 2
+        if ptype == "heart":
+            _heart(d, lc, lc, size, rgba)
+        elif ptype == "star":
+            _star(d, lc, lc, size, size * 0.42, rgba, n=5)
+        elif ptype == "sparkle":
+            _sparkle(d, lc, lc, size, rgba)
+        elif ptype == "flower":
+            _draw_sakura(d, lc, lc, size, rgba)
+        elif ptype == "speech_bubble":
+            _deco_speech_bubble(d, lc, lc, size, rgba)
+        elif ptype == "ribbon":
+            _deco_ribbon(d, lc, lc, size, rgba)
+
+        if rot:
+            layer = layer.rotate(rot, resample=Image.BICUBIC, expand=False)
+        base.alpha_composite(layer, (int(cx - box / 2), int(cy - box / 2)))
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +717,117 @@ def _tmpl_cool_badge(
     return canvas
 
 
+def _tmpl_group_badge(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """
+    Wide layout for group photos: the circle is shown larger and the badge ring
+    is wider, so multiple faces remain legible. Neutral teal background.
+    """
+    canvas = _canvas()
+    bg = _gradient_v((CANVAS_W, CANVAS_H), (70, 170, 175, 200), (40, 120, 140, 215))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Soft outer ring to frame the (larger) group circle
+    ring_r = CIRCLE_DIAM // 2 + 20
+    cx, cy = CIRCLE_CX, CIRCLE_CY
+    draw.ellipse([cx - ring_r, cy - ring_r, cx + ring_r - 1, cy + ring_r - 1],
+                 outline=(255, 255, 255, 200), width=5)
+
+    # "人数を活かす" — slightly thinner border so face area is maximized
+    _paste_circle(canvas, circle, white_px=10, black_px=3,
+                  shadow=True, border_color=(255, 255, 255))
+    if caption:
+        canvas = add_caption(canvas, caption, style="pop")
+    return canvas
+
+
+def _tmpl_action_pop(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """Manga-style concentration lines radiating from the subject + bold text."""
+    canvas = _canvas()
+    bg = _radial_gradient((CANVAS_W, CANVAS_H), (255, 255, 255, 200), (255, 230, 120, 210))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Concentration lines from center outward
+    cx, cy = CIRCLE_CX, CIRCLE_CY
+    inner_r = CIRCLE_DIAM // 2 + 6
+    outer_r = max(CANVAS_W, CANVAS_H)
+    rng = random.Random(7)
+    n = 36
+    for i in range(n):
+        a = 2 * math.pi * i / n + rng.uniform(-0.03, 0.03)
+        x1 = cx + inner_r * math.cos(a)
+        y1 = cy + inner_r * math.sin(a)
+        x2 = cx + outer_r * math.cos(a)
+        y2 = cy + outer_r * math.sin(a)
+        wdt = rng.choice([2, 3, 4])
+        draw.line([(x1, y1), (x2, y2)], fill=(40, 40, 40, 200), width=wdt)
+
+    _paste_circle(canvas, circle, white_px=12, black_px=5, shadow=True)
+    if caption:
+        canvas = add_caption(canvas, caption, style="pop")
+    return canvas
+
+
+def _tmpl_bright_frame(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """
+    For dark / backlit photos: bright warm background + extra-thick white border
+    so a dim subject still stands out.
+    """
+    canvas = _canvas()
+    bg = _radial_gradient((CANVAS_W, CANVAS_H), (255, 252, 235, 255), (255, 226, 150, 235))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Glow ring behind subject
+    glow_r = CIRCLE_DIAM // 2 + 22
+    cx, cy = CIRCLE_CX, CIRCLE_CY
+    glow = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse(
+        [cx - glow_r, cy - glow_r, cx + glow_r - 1, cy + glow_r - 1],
+        fill=(255, 255, 220, 180),
+    )
+    glow = glow.filter(ImageFilter.GaussianBlur(10))
+    canvas = Image.alpha_composite(canvas, glow)
+
+    # Extra-thick white border
+    _paste_circle(canvas, circle, white_px=20, black_px=3, shadow=True)
+    if caption:
+        canvas = add_caption(canvas, caption, style="pop")
+    return canvas
+
+
+def _tmpl_soft_pastel(
+    circle: Image.Image, caption: str, text_style: str
+) -> Image.Image:
+    """Gentle pastel background with soft dots — for family / kids photos."""
+    canvas = _canvas()
+    bg = _gradient_v((CANVAS_W, CANVAS_H), (220, 240, 255, 205), (255, 235, 245, 215))
+    canvas = Image.alpha_composite(canvas, bg)
+    draw = ImageDraw.Draw(canvas)
+
+    # Soft polka dots
+    rng = random.Random(11)
+    dot_colors = [(255, 210, 225, 150), (210, 235, 255, 150), (255, 240, 200, 150)]
+    for _ in range(18):
+        dx = rng.randint(10, CANVAS_W - 10)
+        dy = rng.randint(10, CANVAS_H - 10)
+        r = rng.randint(6, 14)
+        draw.ellipse([dx - r, dy - r, dx + r, dy + r], fill=rng.choice(dot_colors))
+
+    _paste_circle(canvas, circle, white_px=14, black_px=0,
+                  shadow=True, border_color=(255, 248, 252))
+    if caption:
+        canvas = add_caption(canvas, caption, style="bubble")
+    return canvas
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
@@ -516,4 +840,8 @@ _DISPATCH: dict[str, Callable] = {
     "birthday":        _tmpl_birthday,
     "seasonal_sakura": _tmpl_seasonal_sakura,
     "cool_badge":      _tmpl_cool_badge,
+    "group_badge":     _tmpl_group_badge,
+    "action_pop":      _tmpl_action_pop,
+    "bright_frame":    _tmpl_bright_frame,
+    "soft_pastel":     _tmpl_soft_pastel,
 }

@@ -1,5 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ stamp_set['name'] }} - スタンプ詳細{% endblock %}
+{% block title %}{{ stamp_set['name'] }} - セットプレビュー{% endblock %}
+{% set tmpl_icons = {
+  'simple_circle':'⭕','pop_star':'⭐','heart':'❤️','speech_bubble':'💬',
+  'birthday':'🎂','seasonal_sakura':'🌸','cool_badge':'🏅',
+  'group_badge':'👥','action_pop':'💥','bright_frame':'🔆','soft_pastel':'🎨' } %}
 {% block content %}
 
 <div class="mb-3">
@@ -13,12 +17,15 @@
   <div class="card-body">
     <div class="d-flex flex-wrap align-items-start gap-3">
       <div class="flex-grow-1">
-        <h2 class="fw-bold mb-1">{{ stamp_set['name'] }}</h2>
+        <h2 class="fw-bold mb-1">
+          {{ THEMES[stamp_set['theme']].icon if stamp_set['theme'] in THEMES else '' }}
+          {{ stamp_set['name'] }}
+        </h2>
         <p class="text-muted mb-1">{{ stamp_set['description'] or '（説明なし）' }}</p>
         <div class="d-flex flex-wrap gap-2 small text-muted">
-          <span><i class="bi bi-clock me-1"></i>{{ stamp_set['created_at'] }}</span>
-          <span><i class="bi bi-palette me-1"></i>{{ TEMPLATES.get(stamp_set['style'], stamp_set['style']) }}</span>
+          <span><i class="bi bi-palette2 me-1"></i>{{ THEMES[stamp_set['theme']].label if stamp_set['theme'] in THEMES else stamp_set['theme'] }}</span>
           <span><i class="bi bi-chat-quote me-1"></i>{{ TEXT_STYLES.get(stamp_set['text_style'], stamp_set['text_style']) }}</span>
+          <span><i class="bi bi-clock me-1"></i>更新 {{ stamp_set['updated_at'] }}</span>
         </div>
       </div>
       <span class="badge fs-6
@@ -34,6 +41,147 @@
   </div>
 </div>
 
+<!-- スタンプ数 & 一括編集 -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-6">
+        <form method="post" action="{{ url_for('stamps.change_count', set_id=stamp_set['id']) }}"
+              class="d-flex align-items-end gap-2">
+          <div>
+            <label class="form-label fw-semibold small mb-1"><i class="bi bi-collection me-1"></i>スタンプ数</label>
+            <select class="form-select form-select-sm" name="stamp_count" style="width:auto">
+              {% for c in ALLOWED_COUNTS %}
+              <option value="{{ c }}" {% if c == stamp_set['stamp_count'] %}selected{% endif %}>{{ c }}個</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-sm btn-outline-primary"
+                  onclick="return confirm('枚数を変更すると未生成状態になります。続けますか？')">変更</button>
+          <span class="text-muted small">増やすと写真を繰り返して追加します</span>
+        </form>
+      </div>
+      <div class="col-md-6">
+        <form method="post" action="{{ url_for('stamps.bulk_edit', set_id=stamp_set['id']) }}"
+              class="d-flex align-items-end gap-2 flex-wrap">
+          <div>
+            <label class="form-label fw-semibold small mb-1"><i class="bi bi-list-check me-1"></i>一括: 文字スタイル</label>
+            <select class="form-select form-select-sm" name="bulk_text_style" style="width:auto">
+              <option value="">変更しない</option>
+              {% for key, label in TEXT_STYLES.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label fw-semibold small mb-1">一括: テンプレート</label>
+            <select class="form-select form-select-sm" name="bulk_template" style="width:auto">
+              <option value="">変更しない</option>
+              {% for key, label in TEMPLATES.items() %}<option value="{{ key }}">{{ tmpl_icons.get(key,'') }} {{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary">全体に適用</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- main.png / tab.png プレビュー -->
+{% if stamp_set['status'] in ('generated', 'partial') %}
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-star me-2"></i>申請用代表画像</h5>
+    <div class="d-flex gap-4 align-items-end flex-wrap">
+      <div class="text-center">
+        <img src="{{ (stamp_set['output_dir'] ~ '/main.png') | photourl }}"
+             style="width:120px;height:120px;object-fit:contain;background:#f8f9fa;border-radius:8px"
+             alt="main.png">
+        <div class="small text-muted mt-1">main.png (240×240)</div>
+      </div>
+      <div class="text-center">
+        <img src="{{ (stamp_set['output_dir'] ~ '/tab.png') | photourl }}"
+             style="width:96px;height:74px;object-fit:contain;background:#f8f9fa;border-radius:8px"
+             alt="tab.png">
+        <div class="small text-muted mt-1">tab.png (96×74)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+      <div>
+        <h5 class="card-title mb-1"><i class="bi bi-stars me-2"></i>AI仕上げ</h5>
+        <p class="text-muted small mb-0">生成済みの main.png をもとに、LINEプロフィール向けの1024x1024 PNGを3パターン作成します。</p>
+      </div>
+      <form method="post" action="{{ url_for('stamps.ai_finish', set_id=stamp_set['id']) }}" id="ai-finish-form">
+        <button type="submit" id="ai-finish-btn" class="btn btn-outline-success">
+          <i class="bi bi-magic me-1"></i>AI仕上げ
+        </button>
+      </form>
+    </div>
+    {% if ai_finish_outputs %}
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+      {% for out in ai_finish_outputs %}
+      <div class="col">
+        <div class="border rounded p-2 h-100 text-center">
+          <img src="{{ out.path | photourl }}"
+               class="w-100"
+               style="max-width:220px;aspect-ratio:1/1;object-fit:cover;background:#f8f9fa;border-radius:8px"
+               alt="{{ out.key }} AI仕上げ">
+          <div class="fw-semibold mt-2">{{ out.key }}</div>
+          <a class="small" href="{{ out.path | photourl }}" target="_blank" rel="noopener">PNGを開く</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-muted small">まだAI仕上げ結果はありません。</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+      <div>
+        <h5 class="card-title mb-1"><i class="bi bi-chat-square-text me-2"></i>ChatGPT仕上げ準備</h5>
+        <p class="text-muted small mb-0">生成済みの main.png とプロンプトを <code>output/chatgpt-ready/</code> に出力します。</p>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <form method="post" action="{{ url_for('stamps.chatgpt_ready', set_id=stamp_set['id']) }}" id="chatgpt-ready-form">
+          <button type="submit" id="chatgpt-ready-btn" class="btn btn-outline-primary">
+            <i class="bi bi-folder-symlink me-1"></i>ChatGPT仕上げ用に出力
+          </button>
+        </form>
+        <form method="post" action="{{ url_for('stamps.open_chatgpt_ready', set_id=stamp_set['id']) }}">
+          <button type="submit" class="btn btn-outline-secondary" {% if not chatgpt_ready.exists %}disabled{% endif %}>
+            <i class="bi bi-folder2-open me-1"></i>フォルダを開く
+          </button>
+        </form>
+      </div>
+    </div>
+    {% if chatgpt_ready.exists %}
+    <div class="small text-muted mb-2">出力先: <code>{{ chatgpt_ready.output_dir }}</code></div>
+    <div class="d-flex flex-wrap gap-2">
+      {% for f in chatgpt_ready.files %}
+      <a class="btn btn-sm btn-light border" href="{{ f.path | photourl }}" target="_blank" rel="noopener">
+        {{ f.key }} source
+      </a>
+      {% endfor %}
+      {% if chatgpt_ready.prompt_path %}
+      <a class="btn btn-sm btn-light border" href="{{ chatgpt_ready.prompt_path | photourl }}" target="_blank" rel="noopener">
+        prompt.txt
+      </a>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="text-muted small">まだChatGPT仕上げ用ファイルは出力されていません。</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <!-- 規格チェック -->
 {% if validation %}
   {% if validation.is_valid %}
@@ -47,92 +195,305 @@
   </div>
   {% endif %}
   {% if validation.warnings %}
-  <div class="alert alert-warning small">
+  <div class="alert alert-warning small mb-4">
+    <i class="bi bi-exclamation-circle me-1"></i>
     {% for w in validation.warnings %}・{{ w }}<br>{% endfor %}
   </div>
   {% endif %}
 {% endif %}
 
-<!-- スタンプ一覧 (比較プレビュー付き) -->
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-body">
-    <h5 class="card-title mb-3">
-      <i class="bi bi-grid me-2"></i>スタンプ一覧（8枚）
-      {% if stamp_set['status'] == 'generated' %}
-      <small class="text-muted fw-normal ms-2" style="font-size:.8rem">
-        写真 / スタイル適用後 / 完成スタンプ の比較
-      </small>
-      {% endif %}
-    </h5>
-    <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3">
-      {% for item in items %}
-      <div class="col">
-        <div class="card h-100 border
-          {% if item['error_message'] %}border-danger
-          {% elif item['sticker_path'] %}border-success
-          {% else %}border-secondary{% endif %}">
-          <div class="card-body p-2 text-center">
-            <div class="text-muted small fw-bold mb-1">{{ item['position'] }}</div>
+<!-- セット全体プレビュー + インライン編集 -->
+<form method="post" action="{{ url_for('stamps.edit_set', set_id=stamp_set['id']) }}" id="edit-form">
+  <input type="hidden" name="name" value="{{ stamp_set['name'] }}">
+  <input type="hidden" name="description" value="{{ stamp_set['description'] }}">
 
-            {% if item['sticker_path'] %}
-              <!-- 生成済み: 3段比較 -->
-              <div class="d-flex justify-content-center gap-1 mb-1">
-                <!-- 元写真 -->
-                <div class="text-center" style="width:30%">
-                  <img src="{{ item['photo_path'] | photourl }}"
-                       style="width:100%;height:60px;object-fit:cover;border-radius:4px"
-                       alt="元" title="元写真">
-                  <div style="font-size:.6rem;color:#999">元</div>
-                </div>
-                <!-- スタイル適用後 -->
-                {% if item['preview_path'] %}
-                <div class="text-center" style="width:30%">
-                  <img src="{{ item['preview_path'] | photourl }}"
-                       style="width:100%;height:60px;object-fit:cover;border-radius:4px"
-                       alt="加工" title="スタイル適用後">
-                  <div style="font-size:.6rem;color:#999">加工</div>
-                </div>
-                {% endif %}
-                <!-- 完成スタンプ -->
-                <div class="text-center" style="width:{% if item['preview_path'] %}30{% else %}60{% endif %}%">
-                  <img src="{{ item['sticker_path'] | photourl }}"
-                       style="width:100%;height:60px;object-fit:contain;border-radius:4px;background:#f8f9fa"
-                       alt="完成" title="完成スタンプ">
-                  <div style="font-size:.6rem;color:#28a745;font-weight:600">完成</div>
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h5 class="card-title mb-0">
+          <i class="bi bi-grid-3x3-gap me-2"></i>セット全体プレビュー（{{ items|length }}枚）
+          <small class="text-muted fw-normal" style="font-size:.72rem">ドラッグで並び替え</small>
+        </h5>
+        <div class="d-flex align-items-center gap-2">
+          <label class="small text-muted mb-0">文字スタイル</label>
+          <select class="form-select form-select-sm" name="text_style" style="width:auto">
+            {% for key, label in TEXT_STYLES.items() %}
+            <option value="{{ key }}" {% if key==stamp_set['text_style'] %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-3" id="slot-grid">
+        {% for item in items %}
+        <div class="col slot-col" id="slot-{{ item['position'] }}" data-position="{{ item['position'] }}"
+             data-photo="{{ item['photo_path'] | photourl }}">
+          <div class="card h-100 border
+            {% if item['error_message'] %}border-danger
+            {% elif item['sticker_path'] %}border-success
+            {% else %}border-secondary{% endif %}">
+            <div class="card-body p-2">
+
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="badge bg-secondary drag-handle" style="cursor:grab" title="ドラッグで並び替え">
+                  <i class="bi bi-grip-vertical"></i> {{ item['position'] }}
+                </span>
+                <span class="d-flex gap-1">
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 regen-btn"
+                          data-position="{{ item['position'] }}" data-mode="template" title="テンプレ変更で再生成">
+                    <i class="bi bi-shuffle"></i>
+                  </button>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 regen-btn"
+                          data-position="{{ item['position'] }}" data-mode="caption" title="セリフ再提案">
+                    <i class="bi bi-chat-dots"></i>
+                  </button>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 dup-btn"
+                          data-position="{{ item['position'] }}" title="複製">
+                    <i class="bi bi-files"></i>
+                  </button>
+                  <button type="button" class="btn btn-sm btn-light p-0 px-1 text-danger del-btn"
+                          data-position="{{ item['position'] }}" title="削除">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </span>
+              </div>
+
+              <!-- 画像表示（リアルタイムプレビュー対象） -->
+              <div class="position-relative">
+                <img class="w-100 mb-1 slot-img"
+                     src="{{ (item['sticker_path'] | photourl) if item['sticker_path'] else (item['photo_path'] | photourl) }}"
+                     style="height:120px;object-fit:contain;background:#f8f9fa;border-radius:6px"
+                     alt="スタンプ {{ item['position'] }}">
+                <button type="button"
+                        class="btn btn-sm btn-light position-absolute top-0 end-0 m-1 swap-btn"
+                        data-position="{{ item['position'] }}" title="写真を差し替え">
+                  <i class="bi bi-arrow-repeat"></i>
+                </button>
+              </div>
+
+              <!-- セリフ編集 -->
+              <input type="text" class="form-control form-control-sm mb-1 caption-input"
+                     name="caption_{{ item['position'] }}" value="{{ item['caption'] }}"
+                     placeholder="セリフ" data-slot="{{ item['position'] }}"
+                     list="caption-datalist">
+
+              <!-- テンプレート選択 -->
+              <select class="form-select form-select-sm" name="template_{{ item['position'] }}">
+                {% for key, label in TEMPLATES.items() %}
+                <option value="{{ key }}"
+                  {% if key == (item['item_template'] or stamp_set['style']) %}selected{% endif %}>
+                  {{ tmpl_icons.get(key, '') }} {{ label }}
+                </option>
+                {% endfor %}
+              </select>
+
+              <!-- 警告 -->
+              {% if item['warning_list'] %}
+              <div class="mt-1">
+                {% for w in item['warning_list'] %}
+                <div class="text-warning-emphasis bg-warning-subtle rounded px-1 mb-1"
+                     style="font-size:.7rem"><i class="bi bi-exclamation-triangle me-1"></i>{{ w }}</div>
+                {% endfor %}
+              </div>
+              {% endif %}
+
+              <!-- 手動調整パネル -->
+              <a class="d-block text-center small text-muted mt-1" data-bs-toggle="collapse"
+                 href="#adjust-{{ item['position'] }}" role="button" style="font-size:.72rem">
+                <i class="bi bi-sliders me-1"></i>手動調整
+              </a>
+              <div class="collapse mt-1" id="adjust-{{ item['position'] }}">
+                <div class="border rounded p-2" style="font-size:.7rem">
+                  <label class="d-block mb-1">ズーム
+                    <input type="range" class="form-range" min="0.5" max="2.5" step="0.05"
+                           name="zoom_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['zoom'] if item['zoom'] is not none else 1.0) }}">
+                  </label>
+                  <label class="d-block mb-1">左右位置
+                    <input type="range" class="form-range" min="-0.5" max="0.5" step="0.02"
+                           name="offset_x_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['offset_x'] if item['offset_x'] is not none else 0.0) }}">
+                  </label>
+                  <label class="d-block mb-1">上下位置
+                    <input type="range" class="form-range" min="-0.5" max="0.5" step="0.02"
+                           name="offset_y_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['offset_y'] if item['offset_y'] is not none else 0.0) }}">
+                  </label>
+                  <label class="d-block mb-0">明るさ
+                    <input type="range" class="form-range" min="-1" max="1" step="0.05"
+                           name="brightness_{{ item['position'] }}"
+                           value="{{ '%.2f'|format(item['brightness'] if item['brightness'] is not none else 0.0) }}">
+                  </label>
                 </div>
               </div>
-              <!-- 完成スタンプ大表示 -->
-              <img src="{{ item['sticker_path'] | photourl }}"
-                   class="stamp-thumb mb-1"
-                   alt="スタンプ {{ item['position'] }}"
-                   style="max-height:130px">
-            {% else %}
-              <!-- 未生成: 元写真のみ表示 -->
-              <div class="stamp-thumb mb-1 d-flex align-items-center justify-content-center
-                           bg-light rounded" style="height:130px; overflow:hidden">
-                {% if item['error_message'] %}
-                  <i class="bi bi-x-circle fs-2 text-danger"></i>
-                {% else %}
-                  <img src="{{ item['photo_path'] | photourl }}"
-                       style="max-width:100%;max-height:100%;object-fit:contain">
-                {% endif %}
-              </div>
-            {% endif %}
 
-            <div class="small fw-semibold text-truncate" title="{{ item['caption'] }}">
-              {{ item['caption'] or '（セリフなし）' }}
+              <!-- デザイン詳細編集パネル -->
+              {% set ov = item['overrides'] %}
+              <a class="d-block text-center small text-primary mt-1" data-bs-toggle="collapse"
+                 href="#design-{{ item['position'] }}" role="button" style="font-size:.72rem">
+                <i class="bi bi-brush me-1"></i>デザイン詳細編集
+              </a>
+              <div class="collapse mt-1 design-panel" id="design-{{ item['position'] }}"
+                   data-position="{{ item['position'] }}">
+                <div class="border rounded p-2" style="font-size:.7rem">
+                  <div class="fw-bold text-muted mb-1">文字</div>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">文字色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="text_color"
+                             value="{{ ov.get('text_color') | rgbhex('#ffffff') }}"></div>
+                    <div class="col-6">縁色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="stroke_color"
+                             value="{{ ov.get('stroke_color') | rgbhex('#000000') }}"></div>
+                  </div>
+                  <label class="d-block mb-1">縁取り太さ
+                    <input type="range" class="form-range dz" data-k="stroke_width" min="0" max="12" step="1"
+                           value="{{ ov.get('stroke_width', 6) }}"></label>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">フォント
+                      <select class="form-select form-select-sm dz" data-k="font">
+                        {% for fk, fl in FONT_CHOICES.items() %}
+                        <option value="{{ fk }}" {% if ov.get('font')==fk %}selected{% endif %}>{{ fl }}</option>
+                        {% endfor %}
+                      </select></div>
+                    <div class="col-6">文字サイズ
+                      <input type="number" class="form-control form-control-sm dz" data-k="font_size"
+                             min="0" max="80" value="{{ ov.get('font_size', 0) }}" placeholder="自動"></div>
+                  </div>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">位置
+                      <select class="form-select form-select-sm dz" data-k="text_pos">
+                        {% for pk,pl in {'top':'上','center':'中央','bottom':'下'}.items() %}
+                        <option value="{{ pk }}" {% if ov.get('text_pos',('bottom'))==pk %}selected{% endif %}>{{ pl }}</option>
+                        {% endfor %}
+                      </select></div>
+                    <div class="col-6">揃え
+                      <select class="form-select form-select-sm dz" data-k="align">
+                        {% for ak,al in {'left':'左','center':'中央','right':'右'}.items() %}
+                        <option value="{{ ak }}" {% if ov.get('align','center')==ak %}selected{% endif %}>{{ al }}</option>
+                        {% endfor %}
+                      </select></div>
+                  </div>
+                  <label class="d-block mb-2">
+                    <input type="checkbox" class="dz" data-k="shadow" {% if ov.get('shadow') %}checked{% endif %}> 影をつける
+                  </label>
+
+                  <div class="fw-bold text-muted mb-1">フレーム</div>
+                  <div class="row g-1 mb-1">
+                    <div class="col-6">フレーム色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="frame_color"
+                             value="{{ ov.get('frame_color') | rgbhex('#ffffff') }}"></div>
+                    <div class="col-6">外フチ色
+                      <input type="color" class="form-control form-control-color form-control-sm dz" data-k="outer_color"
+                             value="{{ ov.get('outer_color') | rgbhex('#000000') }}"></div>
+                  </div>
+                  <label class="d-block mb-1">フレーム太さ
+                    <input type="range" class="form-range dz" data-k="frame_width" min="0" max="30" step="1"
+                           value="{{ ov.get('frame_width', 14) }}"></label>
+                  <label class="d-block mb-2">
+                    <input type="checkbox" class="dz" data-k="frame_shadow"
+                           {% if ov.get('frame_shadow', True) %}checked{% endif %}> 影をつける
+                  </label>
+
+                  <div class="fw-bold text-muted mb-1 d-flex justify-content-between">
+                    <span>装飾</span>
+                    <select class="form-select form-select-sm w-auto add-deco" style="font-size:.7rem">
+                      <option value="">＋追加</option>
+                      {% for dk, dl in DECORATIONS.items() %}<option value="{{ dk }}">{{ dl }}</option>{% endfor %}
+                    </select>
+                  </div>
+                  <div class="deco-list"></div>
+
+                  <button type="button" class="btn btn-sm btn-primary w-100 mt-2 save-design">
+                    <i class="bi bi-check2 me-1"></i>このデザインを保存
+                  </button>
+                </div>
+              </div>
+
+              {% if item['error_message'] %}
+              <div class="text-danger mt-1" style="font-size:.72rem" title="{{ item['error_message'] }}">
+                <i class="bi bi-exclamation-circle me-1"></i>
+                {{ item['error_message'][:60] }}{% if item['error_message']|length > 60 %}…{% endif %}
+              </div>
+              {% endif %}
             </div>
-            {% if item['error_message'] %}
-            <div class="text-danger mt-1" style="font-size:.72rem" title="{{ item['error_message'] }}">
-              <i class="bi bi-exclamation-circle me-1"></i>
-              {{ item['error_message'][:70] }}{% if item['error_message']|length > 70 %}…{% endif %}
-            </div>
-            {% endif %}
           </div>
         </div>
+        {% endfor %}
+      </div>
+
+      <datalist id="caption-datalist">
+        {% for cat, caps in caption_templates.items() %}
+          {% for c in caps %}<option value="{{ c }}">{% endfor %}
+        {% endfor %}
+      </datalist>
+
+      <div class="mt-3">
+        <button type="submit" class="btn btn-outline-primary">
+          <i class="bi bi-save me-1"></i>編集内容を保存
+        </button>
+        <span class="text-muted small ms-2">セリフ・テンプレート・調整を保存します。デザイン詳細は各スロットの「このデザインを保存」、保存後に再生成で反映されます</span>
+      </div>
+    </div>
+  </div>
+</form>
+
+{# seed existing per-slot design state for JS #}
+<script id="seed-data" type="application/json">{{ seed_json | safe }}</script>
+
+<!-- デザインプリセット（組み込み） -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-1"><i class="bi bi-stars me-2"></i>デザインプリセット（おすすめ）</h5>
+    <p class="text-muted small mb-3">クリックでセット全体に統一感のあるデザインを一括適用します</p>
+    <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-2">
+      {% for key, p in BUILTIN_PRESETS.items() %}
+      <div class="col">
+        <form method="post" action="{{ url_for('stamps.apply_builtin_preset', set_id=stamp_set['id']) }}">
+          <input type="hidden" name="preset_key" value="{{ key }}">
+          <button class="btn w-100 h-100 p-2 text-start
+                  {% if stamp_set['preset_key']==key %}btn-success{% else %}btn-outline-success{% endif %}"
+                  style="font-size:.82rem"
+                  onclick="return confirm('「{{ p.label }}」を全スタンプに適用しますか？個別のデザインは上書きされます。')">
+            <div><span style="font-size:1.3rem">{{ p.icon }}</span></div>
+            <div class="fw-bold">{{ p.label }}</div>
+            <div class="d-flex gap-1 mt-1">
+              <span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid #ccc;background:rgb{{ p.bg_color }}"></span>
+              <span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid #ccc;background:rgb{{ p.frame_color }}"></span>
+              <span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid #ccc;background:rgb{{ p.text_color }}"></span>
+            </div>
+            <div class="text-muted mt-1" style="font-size:.66rem">推奨: {{ p.caption_category }}</div>
+          </button>
+        </form>
       </div>
       {% endfor %}
     </div>
+  </div>
+</div>
+
+<!-- 保存済みプリセット -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-bookmark-star me-2"></i>保存済みプリセット</h5>
+    <div class="d-flex flex-wrap gap-3 align-items-end">
+      <form method="post" action="{{ url_for('stamps.apply_preset', set_id=stamp_set['id']) }}"
+            class="d-flex align-items-end gap-2">
+        <div>
+          <label class="form-label small mb-1">保存済みプリセット</label>
+          <select class="form-select form-select-sm" name="preset_id" style="width:auto">
+            {% for p in presets %}<option value="{{ p['id'] }}">{{ p['name'] }}</option>{% endfor %}
+          </select>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" {% if not presets %}disabled{% endif %}>全体に適用</button>
+      </form>
+      <div class="d-flex align-items-end gap-2">
+        <div>
+          <label class="form-label small mb-1">スロット1のデザインをプリセット保存</label>
+          <input type="text" class="form-control form-control-sm" id="preset-name" placeholder="プリセット名" style="width:auto">
+        </div>
+        <button class="btn btn-sm btn-outline-success" id="save-preset-btn">保存</button>
+      </div>
+    </div>
+    <p class="text-muted small mt-2 mb-0">プリセットを適用すると全スロットの文字色・フォント・フレーム等が揃います</p>
   </div>
 </div>
 
@@ -142,8 +503,7 @@
     <h5 class="card-title mb-3"><i class="bi bi-gear me-2"></i>操作</h5>
     <div class="d-flex flex-wrap gap-3 align-items-center">
 
-      <form method="post" action="{{ url_for('stamps.generate', set_id=stamp_set['id']) }}"
-            id="generate-form">
+      <form method="post" action="{{ url_for('stamps.generate', set_id=stamp_set['id']) }}" id="generate-form">
         <button type="submit" id="generate-btn" class="btn btn-success btn-lg">
           <i class="bi bi-magic me-1"></i>
           {% if stamp_set['status'] in ('generated', 'partial') %}再生成{% else %}スタンプを生成{% endif %}
@@ -151,8 +511,8 @@
       </form>
 
       {% if stamp_set['zip_path'] %}
-      <a href="{{ url_for('stamps.download', set_id=stamp_set['id']) }}" class="btn btn-primary btn-lg">
-        <i class="bi bi-file-earmark-zip me-1"></i>ZIP をダウンロード
+      <a href="{{ url_for('stamps.export_review', set_id=stamp_set['id']) }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-box-arrow-up me-1"></i>エクスポート確認
       </a>
       {% endif %}
 
@@ -178,25 +538,300 @@
     {% elif stamp_set['status'] in ('draft', 'partial') %}
     <div class="alert alert-info mt-3 mb-0">
       <i class="bi bi-info-circle me-1"></i>
-      「スタンプを生成」を押すとキャラクター化処理が始まります。写真8枚で約10〜30秒かかります。
-    </div>
-    {% elif stamp_set['status'] == 'error' %}
-    <div class="alert alert-danger mt-3 mb-0">
-      <i class="bi bi-exclamation-triangle me-1"></i>
-      生成に失敗しました。各スロットのエラーを確認し、リセット→再生成を試してください。
+      編集が済んだら「スタンプを生成」を押してください。写真8枚で約10〜30秒かかります。
     </div>
     {% endif %}
   </div>
 </div>
 
+<!-- 写真差し替えモーダル -->
+<div class="modal fade" id="swap-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">写真を差し替え（スロット <span id="swap-slot-num"></span>）</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="form-control mb-3" id="photo-search" placeholder="絞り込み…">
+        <div id="photo-loading" class="text-center py-4 text-muted">
+          <div class="spinner-border spinner-border-sm me-2"></div>読み込み中…
+        </div>
+        <div id="photo-grid" class="d-flex flex-wrap gap-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
+const SET_ID = {{ stamp_set['id'] }};
+
+function postForm(url, confirmMsg) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  const f = document.createElement('form');
+  f.method = 'POST'; f.action = url;
+  document.body.appendChild(f); f.submit();
+}
+
+function postJson(url, body) {
+  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+}
+
+// ── generate spinner ──
 document.getElementById('generate-form').addEventListener('submit', function () {
   const btn = document.getElementById('generate-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>生成中…';
   document.getElementById('loading-overlay').style.display = 'flex';
+});
+
+// ── drag & drop reorder (SortableJS) ──
+const aiFinishForm = document.getElementById('ai-finish-form');
+if (aiFinishForm) {
+  aiFinishForm.addEventListener('submit', function () {
+    const btn = document.getElementById('ai-finish-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>AI仕上げ中...';
+    document.getElementById('loading-overlay').style.display = 'flex';
+  });
+}
+
+const chatgptReadyForm = document.getElementById('chatgpt-ready-form');
+if (chatgptReadyForm) {
+  chatgptReadyForm.addEventListener('submit', function () {
+    const btn = document.getElementById('chatgpt-ready-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>出力中...';
+  });
+}
+
+const grid = document.getElementById('slot-grid');
+if (window.Sortable) {
+  new Sortable(grid, {
+    handle: '.drag-handle', animation: 150,
+    onEnd: function () {
+      const order = [...grid.querySelectorAll('.slot-col')].map(c => parseInt(c.dataset.position));
+      postJson(`/stamps/${SET_ID}/reorder`, {order}).then(r => r.json())
+        .then(d => { if (d.ok) location.reload(); });
+    }
+  });
+}
+
+// ── per-item: regenerate / duplicate / delete ──
+document.querySelectorAll('.regen-btn').forEach(b => b.addEventListener('click', () => {
+  const f = document.createElement('form');
+  f.method = 'POST';
+  f.action = `/stamps/${SET_ID}/item/${b.dataset.position}/regenerate`;
+  const inp = document.createElement('input');
+  inp.name = 'mode'; inp.value = b.dataset.mode;
+  f.appendChild(inp); document.body.appendChild(f); f.submit();
+}));
+document.querySelectorAll('.dup-btn').forEach(b => b.addEventListener('click', () =>
+  fetch(`/stamps/${SET_ID}/item/${b.dataset.position}/duplicate`, {method:'POST'})
+    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); })
+));
+document.querySelectorAll('.del-btn').forEach(b => b.addEventListener('click', () => {
+  if (!confirm('このスタンプを削除しますか？')) return;
+  fetch(`/stamps/${SET_ID}/item/${b.dataset.position}/delete`, {method:'POST'})
+    .then(r=>r.json()).then(d=>{ if(d.ok) location.reload(); });
+}));
+
+// ── design state (overrides + decorations) ──
+const SEED = JSON.parse(document.getElementById('seed-data').textContent);
+const decoState = {};   // {position: [parts]}
+Object.keys(SEED.decorations || {}).forEach(p => decoState[p] = SEED.decorations[p] || []);
+
+function hexToRgb(hex) {
+  const m = hex.replace('#','');
+  return [parseInt(m.slice(0,2),16), parseInt(m.slice(2,4),16), parseInt(m.slice(4,6),16)];
+}
+
+function gatherOverrides(col) {
+  const panel = col.querySelector('.design-panel');
+  if (!panel) return {};
+  const ov = {};
+  panel.querySelectorAll('.dz').forEach(ctrl => {
+    const k = ctrl.dataset.k;
+    if (ctrl.type === 'color') ov[k] = hexToRgb(ctrl.value);
+    else if (ctrl.type === 'checkbox') ov[k] = ctrl.checked;
+    else if (ctrl.type === 'number' || ctrl.type === 'range') {
+      const n = parseFloat(ctrl.value);
+      if (!isNaN(n)) ov[k] = (k === 'font_size' && n === 0) ? null : n;
+    } else ov[k] = ctrl.value;
+  });
+  return ov;
+}
+
+// ── decoration editor ──
+const DECO_LABELS = {{ DECORATIONS | tojson }};
+function renderDecoList(col) {
+  const pos = col.dataset.position;
+  const list = col.querySelector('.deco-list');
+  if (!list) return;
+  const parts = decoState[pos] || [];
+  list.innerHTML = '';
+  parts.forEach((part, idx) => {
+    const row = document.createElement('div');
+    row.className = 'border rounded p-1 mb-1';
+    row.innerHTML =
+      `<div class="d-flex justify-content-between align-items-center">
+         <span>${DECO_LABELS[part.type] || part.type}</span>
+         <button type="button" class="btn btn-sm btn-light p-0 px-1 text-danger deco-del" data-idx="${idx}">×</button>
+       </div>
+       <div class="d-flex gap-1 align-items-center" style="font-size:.65rem">
+         <span>大</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="size" min="10" max="80" value="${part.size||28}">
+         <span>回</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="rotation" min="0" max="360" value="${part.rotation||0}">
+         <input type="color" class="form-control form-control-color form-control-sm deco-f" data-idx="${idx}" data-f="color" value="${rgbToHex(part.color)}">
+       </div>
+       <div class="d-flex gap-1 align-items-center" style="font-size:.65rem">
+         <span>X</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="x" min="0" max="1" step="0.02" value="${part.x??0.5}">
+         <span>Y</span><input type="range" class="form-range deco-f" data-idx="${idx}" data-f="y" min="0" max="1" step="0.02" value="${part.y??0.5}">
+       </div>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll('.deco-del').forEach(b => b.addEventListener('click', () => {
+    decoState[pos].splice(parseInt(b.dataset.idx), 1); renderDecoList(col); schedulePreview(col);
+  }));
+  list.querySelectorAll('.deco-f').forEach(inp => inp.addEventListener('input', () => {
+    const i = parseInt(inp.dataset.idx), f = inp.dataset.f;
+    decoState[pos][i][f] = (f === 'color') ? hexToRgb(inp.value)
+                          : (f === 'x' || f === 'y') ? parseFloat(inp.value) : parseInt(inp.value);
+    schedulePreview(col);
+  }));
+}
+function rgbToHex(rgb) {
+  const a = rgb || [255,90,120];
+  return '#' + a.slice(0,3).map(v => Math.max(0,Math.min(255,v|0)).toString(16).padStart(2,'0')).join('');
+}
+
+document.querySelectorAll('.add-deco').forEach(sel => sel.addEventListener('change', () => {
+  if (!sel.value) return;
+  const col = sel.closest('.slot-col');
+  const pos = col.dataset.position;
+  (decoState[pos] = decoState[pos] || []).push(
+    {type: sel.value, x:0.5, y:0.2, size:28, rotation:0, color:[255,90,120]});
+  sel.value = '';
+  renderDecoList(col); schedulePreview(col);
+}));
+document.querySelectorAll('.slot-col').forEach(renderDecoList);
+
+// ── realtime preview: same render path as generation (preview == output) ──
+const textStyleSel = document.querySelector('select[name="text_style"]');
+function refreshPreview(col) {
+  const pos = col.dataset.position;
+  const photo = col.dataset.photo;
+  const m = photo.match(/[?&]path=([^&]+)/);
+  if (!m) return;
+  const img = col.querySelector('.slot-img');
+  const params = new URLSearchParams({
+    photo: decodeURIComponent(m[1]),
+    caption: col.querySelector('.caption-input').value,
+    template: col.querySelector('select[name^="template_"]').value,
+    text_style: textStyleSel ? textStyleSel.value : 'bubble',
+    zoom: col.querySelector('input[name^="zoom_"]').value,
+    offset_x: col.querySelector('input[name^="offset_x_"]').value,
+    offset_y: col.querySelector('input[name^="offset_y_"]').value,
+    brightness: col.querySelector('input[name^="brightness_"]').value,
+    style: JSON.stringify(gatherOverrides(col)),
+    deco: JSON.stringify(decoState[pos] || []),
+  });
+  img.style.opacity = '0.5';
+  img.src = `/stamps/${SET_ID}/preview?` + params.toString();
+  img.onload = img.onerror = () => { img.style.opacity = '1'; };
+}
+
+let previewTimer = null;
+function schedulePreview(col) {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => refreshPreview(col), 350);
+}
+
+document.querySelectorAll('.slot-col').forEach(col => {
+  col.querySelectorAll('input, select').forEach(ctrl => {
+    const ev = (ctrl.tagName === 'SELECT' || ctrl.type === 'checkbox') ? 'change' : 'input';
+    ctrl.addEventListener(ev, () => schedulePreview(col));
+  });
+});
+if (textStyleSel) {
+  textStyleSel.addEventListener('change', () =>
+    document.querySelectorAll('.slot-col').forEach(refreshPreview));
+}
+
+// ── save design (overrides + decorations) ──
+document.querySelectorAll('.save-design').forEach(btn => btn.addEventListener('click', () => {
+  const col = btn.closest('.slot-col');
+  const pos = col.dataset.position;
+  postJson(`/stamps/${SET_ID}/item/${pos}/design`,
+           {overrides: gatherOverrides(col), decorations: decoState[pos] || []})
+    .then(r => r.json()).then(d => {
+      btn.innerHTML = d.ok ? '<i class="bi bi-check2"></i> 保存しました' : '保存失敗';
+      setTimeout(() => btn.innerHTML = '<i class="bi bi-check2 me-1"></i>このデザインを保存', 1500);
+    });
+}));
+
+// ── save preset from slot 1 ──
+const savePresetBtn = document.getElementById('save-preset-btn');
+if (savePresetBtn) savePresetBtn.addEventListener('click', () => {
+  const name = document.getElementById('preset-name').value.trim();
+  if (!name) { alert('プリセット名を入力してください'); return; }
+  const col = document.querySelector('.slot-col');
+  postJson('/presets', {name, overrides: gatherOverrides(col)})
+    .then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+});
+
+// ── photo swap ──
+let swapPosition = null, allPhotos = [];
+const swapModal = new bootstrap.Modal(document.getElementById('swap-modal'));
+
+document.querySelectorAll('.swap-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    swapPosition = btn.dataset.position;
+    document.getElementById('swap-slot-num').textContent = swapPosition;
+    document.getElementById('photo-search').value = '';
+    swapModal.show();
+    if (allPhotos.length === 0) fetchPhotos(); else renderGrid(allPhotos);
+  });
+});
+
+function fetchPhotos() {
+  document.getElementById('photo-loading').classList.remove('d-none');
+  fetch('/api/photos').then(r => r.json()).then(data => {
+    allPhotos = data;
+    document.getElementById('photo-loading').classList.add('d-none');
+    renderGrid(data);
+  });
+}
+
+function renderGrid(photos) {
+  const grid = document.getElementById('photo-grid');
+  grid.innerHTML = '';
+  photos.forEach(photo => {
+    const img = document.createElement('img');
+    img.src = '/photo?path=' + encodeURIComponent(photo.path);
+    img.className = 'photo-grid-item';
+    img.loading = 'lazy';
+    img.onerror = () => { img.style.display = 'none'; };
+    img.addEventListener('click', () => doSwap(photo.path));
+    grid.appendChild(img);
+  });
+}
+
+function doSwap(photoPath) {
+  const fd = new FormData();
+  fd.append('position', swapPosition);
+  fd.append('photo_path', photoPath);
+  fetch(`/stamps/${SET_ID}/swap_photo`, {method: 'POST', body: fd})
+    .then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+}
+
+document.getElementById('photo-search').addEventListener('input', function () {
+  const q = this.value.toLowerCase();
+  renderGrid(q ? allPhotos.filter(p =>
+    p.path.toLowerCase().includes(q) || (p.caption||'').toLowerCase().includes(q)
+  ) : allPhotos);
 });
 </script>
 {% endblock %}

@@ -176,3 +176,51 @@ class TestTransparencyWarning:
         # Should pass (no errors), but warn about missing transparency
         assert len(report.warnings) >= 1
         assert any("透過" in w for w in report.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Tests: content checks (captions / photos via items metadata)
+# ---------------------------------------------------------------------------
+
+class TestContentChecks:
+    def _items(self, captions, photos):
+        return [
+            {"position": i + 1, "caption": c, "photo_path": p}
+            for i, (c, p) in enumerate(zip(captions, photos))
+        ]
+
+    def test_duplicate_captions_warn(self, tmp_path):
+        _build_valid_set(tmp_path)
+        caps = ["ありがとう", "ありがとう", "OK", "了解",
+                "ごめん", "最高", "おやすみ", "おはよう"]
+        photos = [f"p{i}.jpg" for i in range(8)]
+        report = validate_stamp_set(tmp_path, items=self._items(caps, photos))
+        assert report.is_valid  # warnings, not errors
+        assert any("重複セリフ" in w for w in report.warnings)
+
+    def test_duplicate_photos_warn(self, tmp_path):
+        _build_valid_set(tmp_path)
+        caps = [f"c{i}" for i in range(8)]
+        photos = ["same.jpg"] * 3 + [f"p{i}.jpg" for i in range(5)]
+        report = validate_stamp_set(tmp_path, items=self._items(caps, photos))
+        assert any("同じ写真" in w for w in report.warnings)
+
+    def test_empty_caption_warn(self, tmp_path):
+        _build_valid_set(tmp_path)
+        caps = ["", "OK", "了解", "ごめん", "最高", "おやすみ", "おはよう", "ありがとう"]
+        photos = [f"p{i}.jpg" for i in range(8)]
+        report = validate_stamp_set(tmp_path, items=self._items(caps, photos))
+        assert any("セリフが空" in w for w in report.warnings)
+
+    def test_unique_captions_no_warn(self, tmp_path):
+        _build_valid_set(tmp_path)
+        caps = ["ありがとう", "OK", "了解", "ごめん",
+                "最高", "おやすみ", "おはよう", "いってきます"]
+        photos = [f"p{i}.jpg" for i in range(8)]
+        report = validate_stamp_set(tmp_path, items=self._items(caps, photos))
+        assert report.warnings == []
+
+    def test_no_items_skips_content_checks(self, tmp_path):
+        _build_valid_set(tmp_path)
+        report = validate_stamp_set(tmp_path)  # no items
+        assert report.is_valid

@@ -113,9 +113,9 @@ class TestAutoSelectTemplate:
         result = auto_select_template(meta)
         assert result in ("pop_star", "heart")
 
-    def test_group_tag_returns_simple(self):
+    def test_group_tag_returns_group_badge(self):
         meta = {"analysis": {"tags": ["group", "family"]}}
-        assert auto_select_template(meta) == "simple_circle"
+        assert auto_select_template(meta) == "group_badge"
 
     def test_caption_keyword(self):
         meta = {"analysis": {"caption": "誕生日パーティー", "tags": []}}

@@ -12,7 +12,7 @@ from app.services.stamp_generator import (
     GenerationSummary,
     StampItemSpec,
     _build_zip,
-    _save_main_tab,
+    _generate_themed_main_tab,
     generate_stamp_set,
     MAIN_H,
     MAIN_W,
@@ -88,27 +88,54 @@ class TestBuildZip:
 
 
 # ---------------------------------------------------------------------------
-# Unit: _save_main_tab
+# Unit: _generate_themed_main_tab
 # ---------------------------------------------------------------------------
 
-class TestSaveMainTab:
-    def test_creates_main_and_tab(self, tmp_path, sample_png):
-        src = sample_png("sticker.png", (300, 280))
-        _save_main_tab(src, tmp_path)
+class TestThemedMainTab:
+    def _stickers(self, tmp_path: Path, n: int) -> list[Path]:
+        paths = []
+        sdir = tmp_path / "stickers"
+        sdir.mkdir(exist_ok=True)
+        for i in range(1, n + 1):
+            p = sdir / f"stamp_{i:02d}.png"
+            Image.new("RGBA", (300, 280), (200, 150, 100, 255)).save(p, "PNG")
+            paths.append(p)
+        return paths
+
+    def test_creates_main_and_tab(self, tmp_path):
+        stickers = self._stickers(tmp_path, 8)
+        _generate_themed_main_tab(stickers, "family_pop", "テストセット", tmp_path)
         assert (tmp_path / "main.png").exists()
         assert (tmp_path / "tab.png").exists()
 
-    def test_main_exact_size(self, tmp_path, sample_png):
-        src = sample_png("sticker.png", (300, 280))
-        _save_main_tab(src, tmp_path)
-        img = Image.open(tmp_path / "main.png")
-        assert img.size == (MAIN_W, MAIN_H)
+    def test_main_exact_size(self, tmp_path):
+        stickers = self._stickers(tmp_path, 8)
+        _generate_themed_main_tab(stickers, "celebration", "お祝い", tmp_path)
+        assert Image.open(tmp_path / "main.png").size == (MAIN_W, MAIN_H)
 
-    def test_tab_exact_size(self, tmp_path, sample_png):
-        src = sample_png("sticker.png", (300, 280))
-        _save_main_tab(src, tmp_path)
-        img = Image.open(tmp_path / "tab.png")
-        assert img.size == (TAB_W, TAB_H)
+    def test_tab_exact_size(self, tmp_path):
+        stickers = self._stickers(tmp_path, 8)
+        _generate_themed_main_tab(stickers, "simple_icon", "アイコン", tmp_path)
+        assert Image.open(tmp_path / "tab.png").size == (TAB_W, TAB_H)
+
+    def test_main_is_rgba(self, tmp_path):
+        stickers = self._stickers(tmp_path, 8)
+        _generate_themed_main_tab(stickers, "cute_daily", "かわいい", tmp_path)
+        assert Image.open(tmp_path / "main.png").mode == "RGBA"
+
+    def test_works_with_single_sticker(self, tmp_path):
+        stickers = self._stickers(tmp_path, 1)
+        _generate_themed_main_tab(stickers, "baby_kids", "ベビー", tmp_path)
+        assert (tmp_path / "main.png").exists()
+
+    def test_empty_stickers_noop(self, tmp_path):
+        _generate_themed_main_tab([], "family_pop", "空", tmp_path)
+        assert not (tmp_path / "main.png").exists()
+
+    def test_unknown_theme_still_works(self, tmp_path):
+        stickers = self._stickers(tmp_path, 8)
+        _generate_themed_main_tab(stickers, "nonexistent", "テスト", tmp_path)
+        assert (tmp_path / "main.png").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -164,13 +191,27 @@ class TestGenerateStampSet:
         assert 5 in summary.failed_positions
         assert summary.success_count == 7
 
-    @pytest.mark.parametrize("style", ["line_stamp", "yuru_chara", "pop_art", "manga", "sticker"])
-    def test_all_styles(self, tmp_path, sample_png, style):
+    @pytest.mark.parametrize("style", ["simple_circle", "pop_star", "heart",
+                                       "birthday", "seasonal_sakura", "cool_badge", "speech_bubble"])
+    def test_all_templates(self, tmp_path, sample_png, style):
         photo = sample_png("photo.png")
         specs = [StampItemSpec(position=i, photo_path=str(photo), caption="テスト", style=style)
                  for i in range(1, 9)]
         summary = generate_stamp_set(specs, tmp_path / f"out_{style}")
         assert summary.success_count == 8
+
+    def test_themed_main_uses_theme_color(self, tmp_path, sample_png):
+        photo = sample_png("photo.png")
+        specs = _make_8_specs(photo)
+        summary = generate_stamp_set(specs, tmp_path / "out",
+                                     theme_name="celebration", set_name="お祝いセット")
+        out = Path(summary.set_output_dir)
+        assert (out / "main.png").exists()
+        # celebration main_bg is orange-ish; sample a corner pixel
+        from app.services.stamp_themes import THEMES
+        main = Image.open(out / "main.png").convert("RGBA")
+        corner = main.getpixel((2, 2))
+        assert corner == THEMES["celebration"].main_bg
 
     def test_japanese_caption_in_sticker(self, tmp_path, sample_png):
         photo = sample_png("photo.png")

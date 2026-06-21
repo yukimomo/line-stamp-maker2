@@ -42,6 +42,15 @@ def create_app(config: dict | None = None) -> Flask:
             return ""
         return f"/photo?path={urllib.parse.quote(str(path), safe='')}"
 
+    # Jinja2 helper: [r,g,b] -> "#rrggbb" (for <input type=color> defaults)
+    @app.template_filter("rgbhex")
+    def rgbhex_filter(rgb, default: str = "#000000") -> str:
+        try:
+            r, g, b = (int(x) for x in list(rgb)[:3])
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except (TypeError, ValueError):
+            return default
+
     from .routes import bp
     app.register_blueprint(bp)
 
