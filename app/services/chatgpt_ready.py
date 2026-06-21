@@ -8,6 +8,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from PIL import Image, ImageDraw, ImageOps
+
 
 CHATGPT_READY_PROMPT = """子供の顔・表情・髪型・服装は変更しない。
 LINEプロフィールアイコン向けに、背景だけをおしゃれに整える。
@@ -26,6 +28,9 @@ SOURCE_FILENAMES = {
     "premium": "icon_premium_source.png",
 }
 
+VARIANTS = tuple(SOURCE_FILENAMES.keys())
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+
 
 @dataclass(frozen=True)
 class ChatGptReadyResult:
@@ -33,6 +38,19 @@ class ChatGptReadyResult:
     prompt_path: str
     source_paths: list[str]
     clipboard_copied: bool
+
+
+@dataclass(frozen=True)
+class FinishedVariant:
+    key: str
+    finished_path: str
+    preview_path: str
+
+
+@dataclass(frozen=True)
+class FinishedImportResult:
+    output_dir: str
+    variants: list[FinishedVariant]
 
 
 def prepare_chatgpt_ready(source_icon: Path, output_root: Path) -> ChatGptReadyResult:
@@ -58,6 +76,104 @@ def prepare_chatgpt_ready(source_icon: Path, output_root: Path) -> ChatGptReadyR
         source_paths=source_paths,
         clipboard_copied=copy_prompt_to_clipboard(CHATGPT_READY_PROMPT),
     )
+
+
+def chatgpt_ready_dir(output_root: Path) -> Path:
+    return output_root / "chatgpt-ready"
+
+
+def get_finished_variants(output_root: Path) -> list[FinishedVariant]:
+    output_dir = chatgpt_ready_dir(output_root)
+    variants: list[FinishedVariant] = []
+    for key in VARIANTS:
+        finished = output_dir / f"icon_{key}_finished.png"
+        preview = output_dir / f"icon_{key}_circle_preview.png"
+        if finished.exists():
+            if not preview.exists():
+                _write_circle_preview(finished, preview)
+            variants.append(FinishedVariant(key=key, finished_path=str(finished), preview_path=str(preview)))
+    return variants
+
+
+def import_finished_images(output_root: Path) -> FinishedImportResult:
+    """Normalize user-saved ChatGPT outputs into finished image files."""
+    output_dir = chatgpt_ready_dir(output_root)
+    if not output_dir.is_dir():
+        raise RuntimeError("output/chatgpt-ready が見つかりません。先にChatGPT仕上げ用に出力してください。")
+
+    variants: list[FinishedVariant] = []
+    for key in VARIANTS:
+        candidate = _find_finished_candidate(output_dir, key)
+        if candidate is None:
+            continue
+        finished = output_dir / f"icon_{key}_finished.png"
+        _normalize_png(candidate, finished)
+        preview = output_dir / f"icon_{key}_circle_preview.png"
+        _write_circle_preview(finished, preview)
+        variants.append(FinishedVariant(key=key, finished_path=str(finished), preview_path=str(preview)))
+
+    if not variants:
+        raise RuntimeError("natural / storybook / premium の仕上げ画像が見つかりませんでした。ファイル名に案名を含めて保存してください。")
+
+    return FinishedImportResult(output_dir=str(output_dir), variants=variants)
+
+
+def save_final_icon(output_root: Path, variant: str) -> str:
+    """Save the selected finished image as final_icon.png."""
+    if variant not in VARIANTS:
+        raise RuntimeError("不明な仕上げ案です。")
+    output_dir = chatgpt_ready_dir(output_root)
+    finished = output_dir / f"icon_{variant}_finished.png"
+    if not finished.is_file():
+        raise RuntimeError(f"{variant} の仕上げ画像が見つかりません。先に取り込んでください。")
+
+    final_path = output_dir / "final_icon.png"
+    shutil.copy2(finished, final_path)
+    _write_circle_preview(final_path, output_dir / "final_icon_circle_preview.png")
+    return str(final_path)
+
+
+def _find_finished_candidate(output_dir: Path, variant: str) -> Path | None:
+    preferred = [
+        output_dir / f"icon_{variant}_finished.png",
+        output_dir / f"{variant}_finished.png",
+        output_dir / f"finished_{variant}.png",
+        output_dir / f"{variant}.png",
+    ]
+    for path in preferred:
+        if path.is_file():
+            return path
+
+    matches = []
+    for path in output_dir.iterdir():
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            continue
+        name = path.name.lower()
+        if variant not in name:
+            continue
+        if any(skip in name for skip in ("source", "circle_preview", "final_icon")):
+            continue
+        matches.append(path)
+    return sorted(matches, key=lambda p: p.stat().st_mtime, reverse=True)[0] if matches else None
+
+
+def _normalize_png(src: Path, dest: Path) -> None:
+    if src.resolve() == dest.resolve():
+        return
+    with Image.open(src) as img:
+        img.convert("RGBA").save(dest, "PNG")
+
+
+def _write_circle_preview(src: Path, dest: Path, size: int = 512) -> None:
+    with Image.open(src) as img:
+        square = ImageOps.fit(img.convert("RGBA"), (size, size), Image.Resampling.LANCZOS)
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, size - 1, size - 1), fill=255)
+    preview = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    preview.paste(square, (0, 0), mask)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    preview.save(dest, "PNG")
 
 
 def copy_prompt_to_clipboard(prompt: str) -> bool:

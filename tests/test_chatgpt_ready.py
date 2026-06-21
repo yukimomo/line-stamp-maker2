@@ -43,3 +43,42 @@ def test_prompt_contains_requested_chatgpt_instructions():
     assert "1. natural" in prompt
     assert "2. storybook" in prompt
     assert "3. premium" in prompt
+
+
+def test_import_finished_images_normalizes_variants(tmp_path):
+    ready = tmp_path / "output" / "chatgpt-ready"
+    ready.mkdir(parents=True)
+    Image.new("RGB", (640, 480), (120, 160, 200)).save(ready / "natural_from_chatgpt.jpg", "JPEG")
+    Image.new("RGBA", (1024, 1024), (200, 120, 160, 255)).save(ready / "storybook_finished.png", "PNG")
+
+    result = chatgpt_ready.import_finished_images(tmp_path / "output")
+
+    assert [v.key for v in result.variants] == ["natural", "storybook"]
+    assert (ready / "icon_natural_finished.png").exists()
+    assert (ready / "icon_natural_circle_preview.png").exists()
+    assert (ready / "icon_storybook_finished.png").exists()
+    assert Image.open(ready / "icon_natural_finished.png").mode == "RGBA"
+    circle = Image.open(ready / "icon_natural_circle_preview.png").convert("RGBA")
+    assert circle.size == (512, 512)
+    assert circle.getpixel((0, 0))[3] == 0
+
+
+def test_save_final_icon_from_finished_variant(tmp_path):
+    ready = tmp_path / "output" / "chatgpt-ready"
+    ready.mkdir(parents=True)
+    Image.new("RGBA", (1024, 1024), (80, 100, 120, 255)).save(ready / "icon_premium_finished.png", "PNG")
+
+    final_path = chatgpt_ready.save_final_icon(tmp_path / "output", "premium")
+
+    assert Path(final_path) == ready / "final_icon.png"
+    assert (ready / "final_icon.png").exists()
+    assert (ready / "final_icon_circle_preview.png").exists()
+
+
+def test_import_finished_images_requires_variant_names(tmp_path):
+    ready = tmp_path / "output" / "chatgpt-ready"
+    ready.mkdir(parents=True)
+    Image.new("RGBA", (1024, 1024), (80, 100, 120, 255)).save(ready / "chatgpt.png", "PNG")
+
+    with pytest.raises(RuntimeError, match="natural / storybook / premium"):
+        chatgpt_ready.import_finished_images(tmp_path / "output")
