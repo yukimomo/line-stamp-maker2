@@ -106,6 +106,80 @@
     </div>
   </div>
 </div>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+      <div>
+        <h5 class="card-title mb-1"><i class="bi bi-stars me-2"></i>AI仕上げ</h5>
+        <p class="text-muted small mb-0">生成済みの main.png をもとに、LINEプロフィール向けの1024x1024 PNGを3パターン作成します。</p>
+      </div>
+      <form method="post" action="{{ url_for('stamps.ai_finish', set_id=stamp_set['id']) }}" id="ai-finish-form">
+        <button type="submit" id="ai-finish-btn" class="btn btn-outline-success">
+          <i class="bi bi-magic me-1"></i>AI仕上げ
+        </button>
+      </form>
+    </div>
+    {% if ai_finish_outputs %}
+    <div class="row row-cols-1 row-cols-md-3 g-3">
+      {% for out in ai_finish_outputs %}
+      <div class="col">
+        <div class="border rounded p-2 h-100 text-center">
+          <img src="{{ out.path | photourl }}"
+               class="w-100"
+               style="max-width:220px;aspect-ratio:1/1;object-fit:cover;background:#f8f9fa;border-radius:8px"
+               alt="{{ out.key }} AI仕上げ">
+          <div class="fw-semibold mt-2">{{ out.key }}</div>
+          <a class="small" href="{{ out.path | photourl }}" target="_blank" rel="noopener">PNGを開く</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-muted small">まだAI仕上げ結果はありません。</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+      <div>
+        <h5 class="card-title mb-1"><i class="bi bi-chat-square-text me-2"></i>ChatGPT仕上げ準備</h5>
+        <p class="text-muted small mb-0">生成済みの main.png とプロンプトを <code>output/chatgpt-ready/</code> に出力します。</p>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <form method="post" action="{{ url_for('stamps.chatgpt_ready', set_id=stamp_set['id']) }}" id="chatgpt-ready-form">
+          <button type="submit" id="chatgpt-ready-btn" class="btn btn-outline-primary">
+            <i class="bi bi-folder-symlink me-1"></i>ChatGPT仕上げ用に出力
+          </button>
+        </form>
+        <form method="post" action="{{ url_for('stamps.open_chatgpt_ready', set_id=stamp_set['id']) }}">
+          <button type="submit" class="btn btn-outline-secondary" {% if not chatgpt_ready.exists %}disabled{% endif %}>
+            <i class="bi bi-folder2-open me-1"></i>フォルダを開く
+          </button>
+        </form>
+      </div>
+    </div>
+    {% if chatgpt_ready.exists %}
+    <div class="small text-muted mb-2">出力先: <code>{{ chatgpt_ready.output_dir }}</code></div>
+    <div class="d-flex flex-wrap gap-2">
+      {% for f in chatgpt_ready.files %}
+      <a class="btn btn-sm btn-light border" href="{{ f.path | photourl }}" target="_blank" rel="noopener">
+        {{ f.key }} source
+      </a>
+      {% endfor %}
+      {% if chatgpt_ready.prompt_path %}
+      <a class="btn btn-sm btn-light border" href="{{ chatgpt_ready.prompt_path | photourl }}" target="_blank" rel="noopener">
+        prompt.txt
+      </a>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="text-muted small">まだChatGPT仕上げ用ファイルは出力されていません。</div>
+    {% endif %}
+  </div>
+</div>
 {% endif %}
 
 <!-- 規格チェック -->
@@ -515,6 +589,25 @@ document.getElementById('generate-form').addEventListener('submit', function () 
 });
 
 // ── drag & drop reorder (SortableJS) ──
+const aiFinishForm = document.getElementById('ai-finish-form');
+if (aiFinishForm) {
+  aiFinishForm.addEventListener('submit', function () {
+    const btn = document.getElementById('ai-finish-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>AI仕上げ中...';
+    document.getElementById('loading-overlay').style.display = 'flex';
+  });
+}
+
+const chatgptReadyForm = document.getElementById('chatgpt-ready-form');
+if (chatgptReadyForm) {
+  chatgptReadyForm.addEventListener('submit', function () {
+    const btn = document.getElementById('chatgpt-ready-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>出力中...';
+  });
+}
+
 const grid = document.getElementById('slot-grid');
 if (window.Sortable) {
   new Sortable(grid, {
