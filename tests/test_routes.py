@@ -284,3 +284,28 @@ class TestChatGptReadyRoute:
 
         assert r.status_code == 302
         assert called["path"] == Path(app_with_photos.config["OUTPUT_DIR"]) / "chatgpt-ready"
+
+    def test_import_chatgpt_finished_and_save_final_icon(self, client, app_with_photos):
+        set_id, _ = self._make_generated_set(client, app_with_photos)
+        ready = Path(app_with_photos.config["OUTPUT_DIR"]) / "chatgpt-ready"
+        ready.mkdir(parents=True)
+        Image.new("RGB", (1024, 1024), (240, 220, 200)).save(ready / "natural_chatgpt.jpg", "JPEG")
+        Image.new("RGBA", (1024, 1024), (200, 220, 240, 255)).save(ready / "premium_finished.png", "PNG")
+
+        r = client.post(f"/stamps/{set_id}/chatgpt_ready/import", follow_redirects=True)
+
+        assert r.status_code == 200
+        assert (ready / "icon_natural_finished.png").exists()
+        assert (ready / "icon_natural_circle_preview.png").exists()
+        assert (ready / "icon_premium_finished.png").exists()
+        assert "final_icon.png".encode("utf-8") in r.data
+
+        r = client.post(
+            f"/stamps/{set_id}/chatgpt_ready/final",
+            data={"variant": "premium"},
+            follow_redirects=True,
+        )
+
+        assert r.status_code == 200
+        assert (ready / "final_icon.png").exists()
+        assert (ready / "final_icon_circle_preview.png").exists()

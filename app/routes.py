@@ -22,7 +22,13 @@ from .services.text_styles import TEXT_STYLES
 from .services.metadata import META_FIELDS, LINE_CATEGORIES, default_metadata, suggest_metadata
 from .services.review import run_review
 from .services.ai_finish import VARIANTS as AI_FINISH_VARIANTS, finish_icon_with_ai
-from .services.chatgpt_ready import prepare_chatgpt_ready, open_folder
+from .services.chatgpt_ready import (
+    get_finished_variants,
+    import_finished_images,
+    open_folder,
+    prepare_chatgpt_ready,
+    save_final_icon,
+)
 from .services.design_presets import (
     BUILTIN_PRESETS, preset_overrides, preset_decorations, preset_main_bg,
 )
@@ -90,16 +96,25 @@ def _ai_finish_outputs(stamp_set) -> list[dict[str, str]]:
 def _chatgpt_ready_info() -> dict:
     base = Path(current_app.config["OUTPUT_DIR"]) / "chatgpt-ready"
     prompt_path = base / "prompt.txt"
+    final_path = base / "final_icon.png"
+    final_preview_path = base / "final_icon_circle_preview.png"
     files = []
     for key in ("natural", "storybook", "premium"):
         path = base / f"icon_{key}_source.png"
         if path.exists():
             files.append({"key": key, "path": str(path)})
+    finished = [
+        {"key": v.key, "path": v.finished_path, "preview_path": v.preview_path}
+        for v in get_finished_variants(Path(current_app.config["OUTPUT_DIR"]))
+    ]
     return {
         "output_dir": str(base),
         "prompt_path": str(prompt_path) if prompt_path.exists() else "",
         "files": files,
-        "exists": bool(files) or prompt_path.exists(),
+        "finished": finished,
+        "final_icon": str(final_path) if final_path.exists() else "",
+        "final_preview": str(final_preview_path) if final_preview_path.exists() else "",
+        "exists": bool(files) or bool(finished) or prompt_path.exists() or final_path.exists(),
     }
 
 
@@ -491,6 +506,38 @@ def open_chatgpt_ready(set_id: int):
         open_folder(Path(current_app.config["OUTPUT_DIR"]) / "chatgpt-ready")
     except Exception as exc:
         flash(f"出力フォルダを開けませんでした: {exc}", "danger")
+    return redirect(url_for("stamps.detail", set_id=set_id))
+
+
+@bp.route("/stamps/<int:set_id>/chatgpt_ready/import", methods=["POST"])
+def import_chatgpt_finished(set_id: int):
+    db = get_db()
+    stamp_set = db.execute("SELECT id FROM stamp_sets WHERE id = ?", (set_id,)).fetchone()
+    if stamp_set is None:
+        abort(404)
+    try:
+        result = import_finished_images(Path(current_app.config["OUTPUT_DIR"]))
+    except Exception as exc:
+        flash(f"ChatGPT仕上げ画像の取り込みに失敗しました: {exc}", "danger")
+    else:
+        keys = ", ".join(v.key for v in result.variants)
+        flash(f"ChatGPT仕上げ画像を取り込みました: {keys}", "success")
+    return redirect(url_for("stamps.detail", set_id=set_id))
+
+
+@bp.route("/stamps/<int:set_id>/chatgpt_ready/final", methods=["POST"])
+def save_chatgpt_final_icon(set_id: int):
+    db = get_db()
+    stamp_set = db.execute("SELECT id FROM stamp_sets WHERE id = ?", (set_id,)).fetchone()
+    if stamp_set is None:
+        abort(404)
+    variant = request.form.get("variant", "")
+    try:
+        final_path = save_final_icon(Path(current_app.config["OUTPUT_DIR"]), variant)
+    except Exception as exc:
+        flash(f"final_icon.png の保存に失敗しました: {exc}", "danger")
+    else:
+        flash(f"{variant} を final_icon.png として保存しました: {final_path}", "success")
     return redirect(url_for("stamps.detail", set_id=set_id))
 
 
